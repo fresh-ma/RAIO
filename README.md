@@ -11,7 +11,7 @@ RAIO is a local-first research companion with a Stardew-inspired pixel lab inter
 | Module | What It Does |
 | --- | --- |
 | Hoot / Home | Central chat, intent guidance, research-day status, persistent stars and progress. |
-| Paper Agent | arXiv search, query decomposition, MaaS literature-map synthesis, paper Q&A, and a pixel Paper Vault bookshelf. |
+| Paper Agent | Backend-proxied arXiv search, query decomposition, MaaS literature-map synthesis, paper Q&A, and a pixel Paper Vault bookshelf. |
 | Server Agent | Local SSH control console, safe remote inspection commands, `nvidia-smi` parser, GPU cards, MaaS diagnosis, command cards, and recent status history. |
 | Learning Agent | MaaS-generated RPG learning paths, stage completion, progress bar, self-review, and quiz feedback. |
 | Life Agent | Todo seeds, priority and due dates, weekly pixel calendar, garden growth, mood logs, and MaaS care responses. |
@@ -20,6 +20,8 @@ RAIO is a local-first research companion with a Stardew-inspired pixel lab inter
 ## MaaS Backend
 
 The browser never receives your MaaS key. Frontend calls go to the local Node proxy at `/api/maas/chat`, and `server.mjs` forwards requests to Huawei MaaS.
+
+Paper search also goes through the local proxy at `/api/papers/arxiv`, so arXiv XML parsing happens in Node instead of the browser. This avoids common browser-side CORS and network-policy failures.
 
 Default configuration:
 

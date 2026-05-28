@@ -39,6 +39,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.url?.startsWith("/api/papers/arxiv") && req.method === "GET") {
+      await handleArxivSearch(req, res);
+      return;
+    }
+
     if (req.url === "/api/server/ssh/run" && req.method === "POST") {
       await handleSshRun(req, res);
       return;
@@ -98,6 +103,30 @@ async function handleMaaSChat(req, res) {
   sendJson(res, 200, { text, model: maasModel, usage: data.usage || null });
 }
 
+async function handleArxivSearch(req, res) {
+  const url = new URL(req.url || "", "http://127.0.0.1");
+  const query = String(url.searchParams.get("q") || "").trim();
+  const maxResults = Math.min(Number(url.searchParams.get("max") || 10), 20);
+  if (!query) {
+    sendJson(res, 400, { error: "Missing q parameter." });
+    return;
+  }
+
+  const endpoint = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&start=0&max_results=${maxResults}&sortBy=relevance&sortOrder=descending`;
+  const response = await fetch(endpoint, {
+    headers: {
+      "User-Agent": "RAIO/0.1 (local research assistant)",
+      "Accept": "application/atom+xml,application/xml,text/xml",
+    },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    sendJson(res, response.status, { error: `arXiv request failed with ${response.status}`, detail: text.slice(0, 500) });
+    return;
+  }
+  sendJson(res, 200, { papers: parseArxivEntries(text, query) });
+}
+
 async function handleSshRun(req, res) {
   const body = await readJson(req);
   const host = String(body.host || "").trim();
@@ -131,6 +160,41 @@ function normalizeMessages(messages) {
     .filter((message) => message && ["user", "assistant"].includes(message.role) && typeof message.content === "string")
     .slice(-12)
     .map((message) => ({ role: message.role, content: message.content }));
+}
+
+function parseArxivEntries(xml, query) {
+  const entries = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map((match) => match[1]);
+  return entries.map((entry, index) => {
+    const idUrl = xmlText(entry, "id");
+    return {
+      id: idUrl.split("/abs/")[1] || `${query}-${index}`,
+      title: normalizeXmlText(xmlText(entry, "title")) || "Untitled paper",
+      summary: normalizeXmlText(xmlText(entry, "summary")),
+      authors: [...entry.matchAll(/<author>\s*<name>([\s\S]*?)<\/name>\s*<\/author>/g)]
+        .slice(0, 4)
+        .map((match) => decodeXml(match[1].trim())),
+      published: xmlText(entry, "published"),
+      link: idUrl,
+      score: Math.max(6, 10 - Math.floor(index / 2)),
+    };
+  });
+}
+
+function xmlText(xml, tag) {
+  return decodeXml(xml.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`))?.[1]?.trim() || "");
+}
+
+function normalizeXmlText(value) {
+  return decodeXml(value).replace(/\s+/g, " ").trim();
+}
+
+function decodeXml(value) {
+  return value
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&apos;", "'");
 }
 
 function validateSshCommand(command) {

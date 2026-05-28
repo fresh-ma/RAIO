@@ -44,6 +44,12 @@ type LearningPath = {
   stages: { title: string; place: string; focus: string; done: boolean }[];
 };
 
+type Tutorial = {
+  title: string;
+  stage: string;
+  content: string;
+};
+
 type Wardrobe = Record<AgentKey, string>;
 
 type AppState = {
@@ -564,19 +570,10 @@ function extractJsonObject<T>(text: string): T | null {
 }
 
 async function searchArxiv(query: string): Promise<Paper[]> {
-  const url = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&start=0&max_results=10&sortBy=relevance&sortOrder=descending`;
-  const response = await fetch(url);
-  const text = await response.text();
-  const xml = new DOMParser().parseFromString(text, "text/xml");
-  return Array.from(xml.querySelectorAll("entry")).map((entry, index) => ({
-    id: entry.querySelector("id")?.textContent?.split("/abs/")[1] || `${query}-${index}`,
-    title: entry.querySelector("title")?.textContent?.replace(/\s+/g, " ").trim() || "Untitled paper",
-    summary: entry.querySelector("summary")?.textContent?.replace(/\s+/g, " ").trim() || "",
-    authors: Array.from(entry.querySelectorAll("author name")).slice(0, 4).map((author) => author.textContent || ""),
-    published: entry.querySelector("published")?.textContent || "",
-    link: entry.querySelector("id")?.textContent || "",
-    score: Math.max(6, 10 - Math.floor(index / 2)),
-  }));
+  const response = await fetch(`/api/papers/arxiv?q=${encodeURIComponent(query)}&max=10`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "arXiv request failed");
+  return Array.isArray(data.papers) ? data.papers : [];
 }
 
 function fallbackPapers(query: string): Paper[] {
@@ -907,6 +904,8 @@ function LearningPage({ state, dispatch, award }: { state: AppState; dispatch: R
   const [status, setStatus] = useState("输入主题，生成一条 RPG 式学习路径。");
   const [quizAnswer, setQuizAnswer] = useState("");
   const [coachReply, setCoachReply] = useState("完成一个阶段后，学者会给你下一步测验或复盘建议。");
+  const [tutorial, setTutorial] = useState<Tutorial | null>(null);
+  const [tutorialLoading, setTutorialLoading] = useState(false);
   const path = state.learningPath;
   const completedStages = path?.stages.filter((stage) => stage.done).length || 0;
   const generate = async () => {
@@ -933,6 +932,39 @@ function LearningPage({ state, dispatch, award }: { state: AppState; dispatch: R
     } finally {
       setLoading(false);
       award(20);
+    }
+  };
+  const openTutorial = async (index: number) => {
+    const stage = path?.stages[index];
+    if (!stage || !path) return;
+    setTutorial({ title: `${path.topic} - ${stage.title}`, stage: stage.title, content: "学者正在写教程..." });
+    setTutorialLoading(true);
+    try {
+      const content = await callMaaS(
+        "scholar",
+        `请为学习主题“${path.topic}”的阶段“${stage.title} / ${stage.place}”写一篇完整中文教程。阶段目标：${stage.focus}
+
+结构必须包含：
+1. 学习目标
+2. 核心概念
+3. 关键公式或机制
+4. 动手实践步骤
+5. 常见坑
+6. 自测题
+7. 下一步资源建议
+
+内容要实用、分节清晰，控制在 900-1400 字。`,
+        { maxTokens: 2200 },
+      );
+      setTutorial({ title: `${path.topic} - ${stage.title}`, stage: stage.title, content: content || "教程生成失败，请稍后再试。" });
+    } catch {
+      setTutorial({
+        title: `${path.topic} - ${stage.title}`,
+        stage: stage.title,
+        content: `## 学习目标\n\n理解 ${stage.focus}\n\n## 核心概念\n\n先用自己的话解释本阶段概念，再找一个最小案例验证它。\n\n## 动手实践\n\n1. 建一个独立实验目录。\n2. 写下输入、输出和评价指标。\n3. 跑通最小脚本。\n4. 记录失败日志。\n\n## 自测题\n\n- 这个阶段解决的核心问题是什么？\n- 如果实验失败，最先检查哪三个变量？`,
+      });
+    } finally {
+      setTutorialLoading(false);
     }
   };
   const completeStage = async (index: number) => {
@@ -970,7 +1002,10 @@ function LearningPage({ state, dispatch, award }: { state: AppState; dispatch: R
               <h3>{stage.title}</h3>
               <strong>{stage.place}</strong>
               <p>{stage.focus}</p>
-              <button className="pixel-btn small" onClick={() => completeStage(index)} disabled={stage.done}>{stage.done ? "已完成" : "完成阶段"}</button>
+              <div className="stage-actions">
+                <button className="pixel-btn small" onClick={() => openTutorial(index)}>进入教程</button>
+                <button className="pixel-btn small secondary" onClick={() => completeStage(index)} disabled={stage.done}>{stage.done ? "已完成" : "完成阶段"}</button>
+              </div>
             </div>
           ))}
         </div>
@@ -990,6 +1025,21 @@ function LearningPage({ state, dispatch, award }: { state: AppState; dispatch: R
         }}>提交复盘</button>
         <p className="agent-advice">{coachReply}</p>
       </section>
+      {tutorial && <div className="tutorial-overlay">
+        <article className="tutorial-panel pixel-panel">
+          <button className="close" onClick={() => setTutorial(null)}>×</button>
+          <p className="eyebrow">{tutorial.stage}</p>
+          <h1>{tutorial.title}</h1>
+          {tutorialLoading && <p>学者正在整理章节...</p>}
+          <div className="tutorial-content">
+            {tutorial.content.split(/\n+/).map((line, index) => {
+              if (/^(#{1,3}\s*)?\d+\.\s/.test(line) || /^##\s/.test(line)) return <h2 key={index}>{line.replace(/^#+\s*/, "")}</h2>;
+              if (/^[-*]\s/.test(line)) return <p className="tutorial-bullet" key={index}>{line.replace(/^[-*]\s*/, "")}</p>;
+              return <p key={index}>{line}</p>;
+            })}
+          </div>
+        </article>
+      </div>}
     </div>
   );
 }

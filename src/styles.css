@@ -689,6 +689,50 @@ select:focus {
   background: rgba(255, 221, 68, 0.08);
 }
 
+.stage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.tutorial-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(5, 6, 14, 0.76);
+}
+
+.tutorial-panel {
+  width: min(940px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  padding: 28px;
+  position: relative;
+}
+
+.tutorial-content {
+  display: grid;
+  gap: 8px;
+}
+
+.tutorial-content h2 {
+  margin: 16px 0 4px;
+  color: var(--accent-gold);
+}
+
+.tutorial-content p {
+  margin: 0;
+}
+
+.tutorial-bullet {
+  padding-left: 14px;
+  border-left: 3px solid var(--accent-green);
+}
+
 .stage-node {
   width: 36px;
   height: 36px;
