@@ -34,6 +34,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.url?.startsWith("/api/assets/stardew") && req.method === "GET") {
+      await handleStardewAssets(req, res);
+      return;
+    }
+
     if (req.url === "/api/maas/chat" && req.method === "POST") {
       await handleMaaSChat(req, res);
       return;
@@ -101,6 +106,37 @@ async function handleMaaSChat(req, res) {
 
   const text = data.choices?.[0]?.message?.content || data.choices?.[0]?.delta?.content || "";
   sendJson(res, 200, { text, model: maasModel, usage: data.usage || null });
+}
+
+async function handleStardewAssets(req, res) {
+  const url = new URL(req.url || "", "http://127.0.0.1");
+  const query = String(url.searchParams.get("q") || "").trim().toLowerCase();
+  const limit = Math.min(Number(url.searchParams.get("limit") || 80), 300);
+  const roots = [
+    path.join(__dirname, "public", "assets", "stardew"),
+    path.join(__dirname, "dist", "assets", "stardew"),
+  ];
+  const root = roots.find((candidate) => fs.existsSync(candidate));
+  if (!root) {
+    sendJson(res, 200, { assets: [], count: 0, missing: true });
+    return;
+  }
+
+  const files = walkFiles(root)
+    .filter((filePath) => /\.(png|jpg|jpeg|webp|gif)$/i.test(filePath))
+    .map((filePath) => {
+      const relativePath = path.relative(root, filePath).split(path.sep).join("/");
+      const parts = relativePath.split("/");
+      return {
+        path: relativePath,
+        url: `/assets/stardew/${parts.map(encodeURIComponent).join("/")}`,
+        name: path.basename(relativePath),
+        category: parts.length > 1 ? parts[0] : "Root",
+      };
+    })
+    .filter((asset) => !query || `${asset.path} ${asset.name} ${asset.category}`.toLowerCase().includes(query));
+
+  sendJson(res, 200, { assets: files.slice(0, limit), count: files.length, missing: false });
 }
 
 async function handleArxivSearch(req, res) {
@@ -280,10 +316,18 @@ function runSshCommand({ host, port, username, password, command }) {
   });
 }
 
+function walkFiles(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) return walkFiles(fullPath);
+    return entry.isFile() ? [fullPath] : [];
+  });
+}
+
 function agentSystemPrompt(agent) {
   const base = "你是 RAIO，一个像素风科研助手。回答要中文、具体、短而有用，语气温暖但不装可爱。";
   const prompts = {
-    hoot: `${base} 你是中央调度猫头鹰 Hoot，负责判断用户意图，并给出下一步行动建议。`,
+    hoot: `${base} 你是中央调度精灵 Lumo，负责判断用户意图，并给出下一步行动建议。`,
     bookworm: `${base} 你是 Paper Agent 书虫，负责论文检索、文献地图、论文摘要和阅读建议。`,
     gears: `${base} 你是 Server Agent 机械师，负责解析服务器/GPU/训练日志并给出运维建议。`,
     scholar: `${base} 你是 Learning Agent 学者，负责生成循序渐进的学习路径。`,

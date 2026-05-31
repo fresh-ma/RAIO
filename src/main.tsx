@@ -51,6 +51,15 @@ type Tutorial = {
 };
 
 type Wardrobe = Record<AgentKey, string>;
+type SpriteCrop = {
+  src: string;
+  width: number;
+  height: number;
+  sheetWidth: number;
+  x: number;
+  y: number;
+  label: string;
+};
 
 type AppState = {
   view: View;
@@ -105,7 +114,7 @@ const initialState: AppState = {
 };
 
 const AGENTS: Record<AgentKey, { name: string; title: string; color: string; view?: View; line: string }> = {
-  hoot: { name: "Hoot", title: "猫头鹰", color: "#bb88ff", view: "home", line: "我会把混乱的科研日常整理成一张小地图。" },
+  hoot: { name: "Lumo", title: "守夜精灵", color: "#bb88ff", view: "home", line: "我会把混乱的科研日常整理成一张小地图。" },
   bookworm: { name: "Bookworm", title: "书虫", color: "#6dc2ff", view: "paper", line: "告诉我研究问题，我去书架深处翻一翻。" },
   gears: { name: "Gears", title: "机械师", color: "#ffaa33", view: "server", line: "把 nvidia-smi 输出贴过来，温度和显存我来盯。" },
   scholar: { name: "Scholar", title: "学者", color: "#88dd55", view: "learn", line: "给我一个主题，我给你铺一条从新手村到大师殿堂的路。" },
@@ -117,27 +126,76 @@ const OUTFITS: Record<AgentKey, { key: string; label: string; cost: number }[]> 
     { key: "scarf", label: "基础围巾", cost: 0 },
     { key: "gentleman", label: "绅士礼帽", cost: 100 },
     { key: "starlord", label: "星露之冠", cost: 500 },
+    { key: "junimo", label: "祝尼魔斗篷", cost: 220 },
+    { key: "mayor", label: "镇长礼服", cost: 360 },
   ],
   bookworm: [
     { key: "academic", label: "毕业学袍", cost: 0 },
     { key: "lab", label: "实验白大褂", cost: 120 },
     { key: "nobel", label: "诺贝尔金装", cost: 500 },
+    { key: "library", label: "图书馆围裙", cost: 180 },
+    { key: "ancient", label: "古代种子袍", cost: 320 },
   ],
   gears: [
     { key: "work", label: "基础工装", cost: 0 },
     { key: "lightning", label: "闪电战甲", cost: 120 },
     { key: "cryo", label: "液氮冷却装", cost: 240 },
+    { key: "blacksmith", label: "铁匠围裙", cost: 160 },
+    { key: "iridium", label: "铱矿护甲", cost: 460 },
   ],
   scholar: [
     { key: "star", label: "星空斗篷", cost: 0 },
     { key: "alchemy", label: "炼金术士袍", cost: 160 },
     { key: "archmage", label: "大魔法师", cost: 420 },
+    { key: "wizard", label: "法师塔长袍", cost: 260 },
+    { key: "galaxy", label: "银河学者", cost: 520 },
   ],
   bloom: [
     { key: "garden", label: "基础草帽", cost: 0 },
     { key: "sakura", label: "樱花和服", cost: 120 },
     { key: "rainbow", label: "彩虹花仙子", cost: 500 },
+    { key: "junimo", label: "森林小精灵", cost: 200 },
+    { key: "harvest", label: "丰收节盛装", cost: 360 },
   ],
+};
+
+const WORKSPACE_SCENES: Record<Exclude<View, "home">, { title: string; map: string; prop: SpriteCrop; agent: AgentKey; tone: string }> = {
+  paper: {
+    title: "图书馆阅读桌",
+    map: "Maps/townInterior..png",
+    prop: { src: "LooseSprites/JunimoNote..png", width: 64, height: 64, sheetWidth: 640, x: 0, y: 0, label: "笔记" },
+    agent: "bookworm",
+    tone: "library",
+  },
+  server: {
+    title: "铁匠铺控制台",
+    map: "Maps/spring_BusStop..png",
+    prop: { src: "TileSheets/tools..png", width: 16, height: 16, sheetWidth: 336, x: 0, y: 0, label: "工具" },
+    agent: "gears",
+    tone: "forge",
+  },
+  learn: {
+    title: "法师塔课堂",
+    map: "Maps/WizardHouseTiles..png",
+    prop: { src: "TileSheets/emotes..png", width: 16, height: 16, sheetWidth: 64, x: 0, y: 16, label: "灵感" },
+    agent: "scholar",
+    tone: "tower",
+  },
+  life: {
+    title: "温室与农场日历",
+    map: "Maps/GreenHouseInterior..png",
+    prop: { src: "TileSheets/crops..png", width: 16, height: 16, sheetWidth: 256, x: 32, y: 48, label: "作物" },
+    agent: "bloom",
+    tone: "greenhouse",
+  },
+};
+
+const AGENT_SPRITES: Record<AgentKey, SpriteCrop> = {
+  hoot: { src: "Characters/Junimo..png", width: 16, height: 16, sheetWidth: 128, x: 0, y: 0, label: "Lumo" },
+  bookworm: { src: "Characters/Penny..png", width: 16, height: 32, sheetWidth: 64, x: 0, y: 0, label: "Bookworm" },
+  gears: { src: "Characters/Clint..png", width: 16, height: 32, sheetWidth: 64, x: 0, y: 0, label: "Gears" },
+  scholar: { src: "Characters/Wizard..png", width: 16, height: 32, sheetWidth: 64, x: 0, y: 0, label: "Scholar" },
+  bloom: { src: "Characters/Robin..png", width: 16, height: 32, sheetWidth: 64, x: 0, y: 0, label: "Bloom" },
 };
 
 const CATEGORY_LABELS = {
@@ -252,6 +310,10 @@ function dayCount() {
   return Math.max(1, Math.floor((Date.now() - start.getTime()) / 86400000) + 1);
 }
 
+function stardewAsset(path: string) {
+  return `/assets/stardew/${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
 function matrixToShadow(matrix: (string | null)[][], pixelSize: number) {
   return matrix
     .flatMap((row, y) =>
@@ -348,25 +410,42 @@ function spriteMatrix(agent: AgentKey, outfit: string) {
   return mergeLayers([body, details]);
 }
 
-function PixelAgent({ agent, outfit, size = 4, mood = "idle" }: { agent: AgentKey; outfit: string; size?: number; mood?: string }) {
-  const matrix = useMemo(() => spriteMatrix(agent, outfit), [agent, outfit]);
-  const shadow = useMemo(() => matrixToShadow(matrix, size), [matrix, size]);
-  const spriteWidth = matrix[0]?.length || 20;
-  const spriteHeight = matrix.length || 24;
+function PixelAgent({ agent, size = 4, mood = "idle" }: { agent: AgentKey; outfit?: string; size?: number; mood?: string }) {
+  const sprite = AGENT_SPRITES[agent];
   return (
     <div className={`agent-stage ${mood}`}>
       {mood === "thinking" && <div className="thinking-bubble">...</div>}
       <div
-        className="pixel-sprite"
+        className="agent-sprite"
         style={{
-          width: size,
-          height: size,
-          boxShadow: shadow,
-          marginRight: spriteWidth * size,
-          marginBottom: spriteHeight * size,
+          width: sprite.width * size,
+          height: sprite.height * size,
+          backgroundImage: `url("${stardewAsset(sprite.src)}")`,
+          backgroundSize: `${sprite.sheetWidth * size}px auto`,
+          backgroundPosition: `${-sprite.x * size}px ${-sprite.y * size}px`,
         }}
       />
     </div>
+  );
+}
+
+function PixelProp({ src, className = "" }: { src: string; className?: string }) {
+  return <img className={`pixel-prop ${className}`} src={stardewAsset(src)} alt="" loading="lazy" />;
+}
+
+function SheetSprite({ sprite, scale = 3, className = "" }: { sprite: SpriteCrop; scale?: number; className?: string }) {
+  return (
+    <span
+      className={`sheet-sprite ${className}`}
+      title={sprite.label}
+      style={{
+        width: sprite.width * scale,
+        height: sprite.height * scale,
+        backgroundImage: `url("${stardewAsset(sprite.src)}")`,
+        backgroundSize: `${sprite.sheetWidth * scale}px auto`,
+        backgroundPosition: `${-sprite.x * scale}px ${-sprite.y * scale}px`,
+      }}
+    />
   );
 }
 
@@ -499,10 +578,10 @@ function HomePage({ state, dispatch, award }: { state: AppState; dispatch: React
     <div className="page-grid home-grid">
       <section className="hero pixel-panel">
         <div>
-          <p className="eyebrow">Central Square</p>
-          <h1>科研小镇中央广场</h1>
+          <p className="eyebrow">Research All-in-One</p>
+          <h1>RAIO 科研生存套件</h1>
           <DialogBox agent="hoot" outfit={state.wardrobe.hoot}>
-            Hoo~ {todayGreeting()}。你有 {state.savedPapers.length} 篇收藏论文、{state.todos.filter((t) => !t.done).length} 个待办，花园里已经长出 {state.garden.length} 个小成果。
+            Lumo：{todayGreeting()}。你有 {state.savedPapers.length} 篇收藏论文、{state.todos.filter((t) => !t.done).length} 个待办，花园里已经长出 {state.garden.length} 个小成果。
           </DialogBox>
         </div>
         <PixelAgent agent="hoot" outfit={state.wardrobe.hoot} size={6} />
@@ -513,8 +592,10 @@ function HomePage({ state, dispatch, award }: { state: AppState; dispatch: React
         <StatusCard label="花园成果" value={`${state.garden.length}`} accent="#88dd55" />
         <StatusCard label="星星余额" value={`${state.stars}`} accent="#ffdd44" />
       </section>
+      <AgentRoster state={state} dispatch={dispatch} />
+      <AchievementBoard state={state} />
       <section className="pixel-panel chat-panel">
-        <h2>和 Hoot 聊聊</h2>
+        <h2>和 Lumo 聊聊</h2>
         <div className="chat-log">
           {state.chat.slice(-6).map((message, index) => (
             <div key={`${message.role}-${index}`} className={`chat-line ${message.role}`}>{message.text}</div>
@@ -533,11 +614,69 @@ function StatusCard({ label, value, accent }: { label: string; value: string; ac
   return <div className="status-card" style={{ borderColor: accent }}><span>{label}</span><strong>{value}</strong></div>;
 }
 
+function AgentRoster({ state, dispatch }: { state: AppState; dispatch: React.Dispatch<Action> }) {
+  const agents: { agent: AgentKey; view: View; scene: string }[] = [
+    { agent: "bookworm", view: "paper", scene: "Paper Agent" },
+    { agent: "gears", view: "server", scene: "Server Agent" },
+    { agent: "scholar", view: "learn", scene: "Learning Agent" },
+    { agent: "bloom", view: "life", scene: "Life Agent" },
+  ];
+  return (
+    <section className="pixel-panel agent-roster">
+      {agents.map((item) => (
+        <button className="agent-card" onClick={() => dispatch({ type: "view", view: item.view })} key={item.agent}>
+          <PixelAgent agent={item.agent} outfit={state.wardrobe[item.agent]} size={3} />
+          <span>{item.scene}</span>
+          <strong>{AGENTS[item.agent].title}</strong>
+          <em>{AGENTS[item.agent].line}</em>
+        </button>
+      ))}
+    </section>
+  );
+}
+
+function AchievementBoard({ state }: { state: AppState }) {
+  const unlockedOutfits = (Object.keys(state.wardrobe) as AgentKey[]).filter((agent) => state.wardrobe[agent] !== OUTFITS[agent][0].key).length;
+  const achievements = [
+    { title: "图书馆开张", detail: "收藏 3 篇论文", done: state.savedPapers.length >= 3, icon: "▤" },
+    { title: "农场晨会", detail: "记录 5 个 Todo", done: state.todos.length >= 5, icon: "◆" },
+    { title: "温室天气", detail: "记录 3 次心情", done: state.moods.length >= 3, icon: "✿" },
+    { title: "全员换装", detail: "至少 3 位 Agent 换装", done: unlockedOutfits >= 3, icon: "★" },
+    { title: "大师路线", detail: "完成学习路径 3 阶段", done: (state.learningPath?.stages.filter((stage) => stage.done).length || 0) >= 3, icon: "✦" },
+    { title: "丰收仓库", detail: "花园达到 12 个成果", done: state.garden.length >= 12, icon: "▣" },
+  ];
+  return (
+    <section className="pixel-panel achievement-board">
+      <h2>成就公告栏</h2>
+      <div className="achievement-grid">
+        {achievements.map((item) => (
+          <div className={`achievement ${item.done ? "done" : ""}`} key={item.title}>
+            <span>{item.icon}</span>
+            <strong>{item.title}</strong>
+            <em>{item.done ? "已点亮" : item.detail}</em>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function DialogBox({ agent, outfit, children }: { agent: AgentKey; outfit: string; children: React.ReactNode }) {
   return (
     <div className="dialog-wrap">
       <PixelAgent agent={agent} outfit={outfit} size={3} mood="talking" />
       <div className="pixel-dialog">{children}</div>
+    </div>
+  );
+}
+
+function WorkspaceScene({ view, outfit, busy = false }: { view: Exclude<View, "home">; outfit: string; busy?: boolean }) {
+  const scene = WORKSPACE_SCENES[view];
+  return (
+    <div className={`workspace-scene ${scene.tone}`}>
+      <div className="workspace-worker">
+        <PixelAgent agent={scene.agent} outfit={outfit} size={4} mood={busy ? "thinking" : "idle"} />
+      </div>
     </div>
   );
 }
@@ -659,7 +798,7 @@ function PaperPage({ state, dispatch, award }: { state: AppState; dispatch: Reac
           <h1>书虫的图书馆</h1>
           <p>{status}</p>
         </div>
-        <PixelAgent agent="bookworm" outfit={state.wardrobe.bookworm} size={5} mood={loading ? "thinking" : "idle"} />
+        <WorkspaceScene view="paper" outfit={state.wardrobe.bookworm} busy={loading} />
       </section>
       <section className="pixel-panel">
         <div className="input-row">
@@ -820,7 +959,7 @@ function ServerPage({ award }: { award: (n: number) => void }) {
     <div className="page-grid">
       <section className="pixel-panel module-head orange">
         <div><p className="eyebrow">Server Agent</p><h1>机械师的控制室</h1><p>通过本地 SSH 代理连接服务器，执行安全巡检命令；也可以粘贴输出离线解析。</p></div>
-        <PixelAgent agent="gears" outfit="work" size={5} />
+        <WorkspaceScene view="server" outfit="work" busy={sshRunning || loadingAdvice} />
       </section>
       <section className="pixel-panel ssh-console">
         <h2>SSH 控制台</h2>
@@ -987,7 +1126,7 @@ function LearningPage({ state, dispatch, award }: { state: AppState; dispatch: R
     <div className="page-grid learn-layout">
       <section className="pixel-panel module-head green">
         <div><p className="eyebrow">Learning Agent</p><h1>学者的魔法塔</h1><p>{status}</p></div>
-        <PixelAgent agent="scholar" outfit={state.wardrobe.scholar} size={5} mood={loading ? "thinking" : "idle"} />
+        <WorkspaceScene view="learn" outfit={state.wardrobe.scholar} busy={loading} />
       </section>
       <section className="pixel-panel">
         <div className="input-row"><input value={topic} onChange={(event) => setTopic(event.target.value)} /><button className="pixel-btn" onClick={generate} disabled={loading}>{loading ? "生成中" : "生成路径"}</button></div>
@@ -1084,7 +1223,7 @@ function LifePage({ state, dispatch, award }: { state: AppState; dispatch: React
     <div className="page-grid life-layout">
       <section className="pixel-panel module-head pink">
         <div><p className="eyebrow">Life Agent</p><h1>园丁的温室花园</h1><p>任务会长成花，心情会让花园有天气。</p></div>
-        <PixelAgent agent="bloom" outfit={state.wardrobe.bloom} size={5} />
+        <WorkspaceScene view="life" outfit={state.wardrobe.bloom} busy={moodLoading} />
       </section>
       <section className="pixel-panel">
         <h2>种下一颗 Todo</h2>
@@ -1156,13 +1295,15 @@ function moodGlyph(mood: Mood) {
 
 function WardrobePanel({ state, dispatch, onClose }: { state: AppState; dispatch: React.Dispatch<Action>; onClose: () => void }) {
   const [agent, setAgent] = useState<AgentKey>("hoot");
+  const totalOutfits = (Object.keys(OUTFITS) as AgentKey[]).reduce((sum, key) => sum + OUTFITS[key].length, 0);
+  const unlocked = (Object.keys(OUTFITS) as AgentKey[]).reduce((sum, key) => sum + OUTFITS[key].filter((outfit) => state.stars >= outfit.cost).length, 0);
   return (
     <div className="overlay">
       <section className="wardrobe pixel-panel">
         <button className="close" onClick={onClose}>×</button>
         <div className="wardrobe-preview">
           <PixelAgent agent={agent} outfit={state.wardrobe[agent]} size={6} />
-          <div><p className="eyebrow">Wardrobe</p><h2>{AGENTS[agent].title}的衣柜</h2><p>星星足够时可以切换装扮，当前不会扣费，先保留轻量换装体验。</p></div>
+          <div><p className="eyebrow">Wardrobe & Achievement</p><h2>{AGENTS[agent].title}的衣柜</h2><p>已解锁 {unlocked}/{totalOutfits} 套装。星星足够即可穿戴，状态只保存在本机 localStorage。</p></div>
         </div>
         <div className="agent-tabs">
           {(Object.keys(AGENTS) as AgentKey[]).map((key) => <button className={agent === key ? "active" : ""} onClick={() => setAgent(key)} key={key}>{AGENTS[key].title}</button>)}
