@@ -1,0 +1,226 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --sv-bg: #1a1a2e;
+  --sv-bg2: #16213e;
+  --sv-dark: #0f3460;
+  --sv-gold: #e8b830;
+  --sv-teal: #4ecdc4;
+  --sv-cream: #f5e6c8;
+  --sv-panel: #2a2a4a;
+  --sv-border: #4a4a6a;
+  --sv-text: #e8dcc8;
+}
+
+* {
+  image-rendering: pixelated;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Zpix', 'Press Start 2P', monospace;
+  background: var(--sv-bg);
+  color: var(--sv-text);
+  overflow-x: hidden;
+}
+
+/* 像素风边框 */
+.pixel-border {
+  border: 3px solid var(--sv-border);
+  box-shadow: 
+    inset 2px 2px 0 rgba(255,255,255,0.1),
+    inset -2px -2px 0 rgba(0,0,0,0.3),
+    4px 4px 0 rgba(0,0,0,0.5);
+}
+
+.pixel-border-gold {
+  border: 3px solid var(--sv-gold);
+  box-shadow: 
+    inset 2px 2px 0 rgba(255,255,255,0.2),
+    inset -2px -2px 0 rgba(0,0,0,0.3),
+    4px 4px 0 #8b6914;
+}
+
+/* 像素风按钮 */
+.pixel-btn {
+  font-family: 'Press Start 2P', 'Zpix', monospace;
+  font-size: 11px;
+  padding: 10px 20px;
+  border: 3px solid #000;
+  box-shadow: 4px 4px 0 #000;
+  cursor: pointer;
+  transition: all 0.1s;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  position: relative;
+}
+
+.pixel-btn:hover {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 #000;
+}
+
+.pixel-btn:active {
+  transform: translate(4px, 4px);
+  box-shadow: none;
+}
+
+.pixel-btn-gold {
+  background: var(--sv-gold);
+  color: #1a1a2e;
+}
+
+.pixel-btn-teal {
+  background: var(--sv-teal);
+  color: #1a1a2e;
+}
+
+.pixel-btn-red {
+  background: #e74c3c;
+  color: #fff;
+}
+
+/* 像素风输入框 */
+.pixel-input {
+  font-family: 'Zpix', monospace;
+  font-size: 14px;
+  padding: 10px 14px;
+  background: rgba(0,0,0,0.3);
+  border: 3px solid var(--sv-border);
+  color: var(--sv-cream);
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.pixel-input:focus {
+  border-color: var(--sv-gold);
+  box-shadow: 0 0 10px rgba(232, 184, 48, 0.3);
+}
+
+.pixel-input::placeholder {
+  color: #6a6a8a;
+}
+
+/* 面板 */
+.pixel-panel {
+  background: var(--sv-panel);
+  border: 3px solid var(--sv-border);
+  box-shadow: 
+    inset 2px 2px 0 rgba(255,255,255,0.05),
+    inset -2px -2px 0 rgba(0,0,0,0.3),
+    6px 6px 0 rgba(0,0,0,0.5);
+  padding: 16px;
+}
+
+/* 像素风标题 */
+.pixel-title {
+  font-family: 'Press Start 2P', monospace;
+  color: var(--sv-gold);
+  text-shadow: 2px 2px 0 #8b6914, 4px 4px 0 rgba(0,0,0,0.5);
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--sv-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--sv-border);
+  border: 1px solid var(--sv-bg);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--sv-gold);
+}
+
+/* 聊天气泡动画 */
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.chat-msg {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* 像素闪烁动画 */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.cursor-blink {
+  animation: blink 1s infinite;
+}
+
+/* 星星/粒子动画 */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+.float-anim {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* 成就解锁动画 */
+@keyframes achieveUnlock {
+  0% { transform: scale(0); opacity: 0; }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.achieve-unlock {
+  animation: achieveUnlock 0.5s ease-out;
+}
+
+/* 像素风进度条 */
+.pixel-progress {
+  height: 20px;
+  background: rgba(0,0,0,0.3);
+  border: 2px solid var(--sv-border);
+  position: relative;
+  overflow: hidden;
+}
+
+.pixel-progress-fill {
+  height: 100%;
+  background: var(--sv-gold);
+  transition: width 0.5s ease;
+  position: relative;
+}
+
+.pixel-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: rgba(255,255,255,0.15);
+}
+
+/* 像素化分割线 */
+.pixel-divider {
+  border: none;
+  height: 3px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--sv-border) 0px,
+    var(--sv-border) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  margin: 12px 0;
+}
