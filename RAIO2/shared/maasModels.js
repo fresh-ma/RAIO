@@ -1,4 +1,4 @@
-export const DEFAULT_MAAS_MODEL = 'deepseek-v3.2';
+export const DEFAULT_MAAS_MODEL = 'deepseek-v4-flash';
 
 export const HUAWEI_MAAS_TEXT_MODELS = [
   { value: 'deepseek-v3.2', label: 'DeepSeek-V3.2', note: '性价比好，适合普通文本生成与批量任务' },
