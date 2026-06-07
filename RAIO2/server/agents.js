@@ -1,4 +1,4 @@
-import { AGENT_RUNTIMES, MAAS_API_URL, MAAS_API_KEY, MAAS_MODEL } from './config.js';
+import { AGENT_RUNTIMES, MAAS_API_URL, MAAS_MODEL } from './config.js';
 
 // Agent 路由：根据意图分发到不同 Agent
 const AGENTS = {
@@ -119,11 +119,15 @@ function resolveAgent(agentKey, userMessage) {
   return detectAgent(userMessage);
 }
 
-function getAgentRuntime(agentKey) {
-  return AGENT_RUNTIMES[agentKey] || {
+function getAgentRuntime(agentKey, apiKey) {
+  const runtime = AGENT_RUNTIMES[agentKey] || {
     apiUrl: MAAS_API_URL,
-    apiKey: MAAS_API_KEY,
     model: MAAS_MODEL,
+  };
+
+  return {
+    ...runtime,
+    apiKey: apiKey || '',
   };
 }
 
@@ -145,8 +149,12 @@ function buildMessages(agentKey, userMessage, history = [], context = {}) {
 // SSE 流式调用大模型
 export async function streamChat(userMessage, history = [], context = {}) {
   const agentKey = resolveAgent(context.agent, userMessage);
-  const runtime = getAgentRuntime(agentKey);
+  const runtime = getAgentRuntime(agentKey, context.apiKey);
   const messages = buildMessages(agentKey, userMessage, history, context);
+
+  if (!runtime.apiKey) {
+    throw new Error('缺少用户 MaaS API Key，请重新登录并输入自己的 Key');
+  }
   
   const response = await fetch(runtime.apiUrl, {
     method: 'POST',
@@ -174,8 +182,12 @@ export async function streamChat(userMessage, history = [], context = {}) {
 // 非流式调用（用于生成学习大纲、测验等需要完整响应的场景）
 export async function chatComplete(userMessage, history = [], context = {}) {
   const agentKey = resolveAgent(context.agent || 'scholar', userMessage);
-  const runtime = getAgentRuntime(agentKey);
+  const runtime = getAgentRuntime(agentKey, context.apiKey);
   const messages = buildMessages(agentKey, userMessage, history, context);
+
+  if (!runtime.apiKey) {
+    throw new Error('缺少用户 MaaS API Key，请重新登录并输入自己的 Key');
+  }
   
   const response = await fetch(runtime.apiUrl, {
     method: 'POST',

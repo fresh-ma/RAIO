@@ -7,6 +7,18 @@ function getHeaders(token) {
   };
 }
 
+function getUserApiKey() {
+  return localStorage.getItem('raio_maas_api_key') || '';
+}
+
+function getAIHeaders(token) {
+  const apiKey = getUserApiKey();
+  return {
+    ...getHeaders(token),
+    ...(apiKey ? { 'X-MAAS-API-KEY': apiKey } : {}),
+  };
+}
+
 export async function register(username, password) {
   const res = await fetch(`${API_BASE}/auth/register`, {
     method: 'POST',
@@ -130,7 +142,7 @@ export async function saveNote(token, paperId, content) {
 export async function summarizePaper(token, paperId) {
   const res = await fetch(`${API_BASE}/papers/${paperId}/summary`, {
     method: 'POST',
-    headers: getHeaders(token),
+    headers: getAIHeaders(token),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || '论文总结失败');
@@ -145,7 +157,7 @@ export async function getCourses(token) {
 export async function generateCourse(token, topic) {
   const res = await fetch(`${API_BASE}/learn/generate`, {
     method: 'POST',
-    headers: getHeaders(token),
+    headers: getAIHeaders(token),
     body: JSON.stringify({ topic }),
   });
   return res.json();
@@ -154,7 +166,7 @@ export async function generateCourse(token, topic) {
 export async function generateQuiz(token, data) {
   const res = await fetch(`${API_BASE}/learn/quiz`, {
     method: 'POST',
-    headers: getHeaders(token),
+    headers: getAIHeaders(token),
     body: JSON.stringify(data),
   });
   return res.json();
@@ -177,7 +189,7 @@ export async function getNews(token) {
 export async function analyzeNews(token, item, question) {
   const res = await fetch(`${API_BASE}/news/analyze`, {
     method: 'POST',
-    headers: getHeaders(token),
+    headers: getAIHeaders(token),
     body: JSON.stringify({ item, question }),
   });
   return res.json();
@@ -191,7 +203,7 @@ export function streamChat(token, message, agent, onChunk, onDone, onError, onAg
   
   fetch(`${API_BASE}/chat/stream`, {
     method: 'POST',
-    headers: getHeaders(token),
+    headers: getAIHeaders(token),
     body: JSON.stringify(body),
     signal: controller.signal,
   })

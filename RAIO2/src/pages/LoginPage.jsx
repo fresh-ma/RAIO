@@ -8,6 +8,7 @@ export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [apiKey, setApiKey] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login: doLogin } = useAuth();
@@ -16,6 +17,11 @@ export default function LoginPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    if (!apiKey.trim()) {
+      setError('请输入你的 MaaS API Key');
+      return;
+    }
     
     if (isRegister) {
       if (!/^[a-zA-Z0-9]{3,12}$/.test(username)) {
@@ -37,7 +43,7 @@ export default function LoginPage() {
       const data = isRegister
         ? await register(username, password)
         : await login(username, password);
-      doLogin(data.token, data.user);
+      doLogin(data.token, data.user, apiKey.trim());
       navigate('/');
     } catch (e) {
       setError(e.message);
@@ -124,6 +130,20 @@ export default function LoginPage() {
               />
             </div>
           )}
+
+          <div className="mb-4">
+            <label className="text-xs text-sv-gold font-pixel-cn mb-1 block">MaaS API Key</label>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              className="pixel-input"
+              placeholder="输入你自己的模型 API Key"
+              autoComplete="off"
+              required
+            />
+            <p className="text-xs text-sv-text2 mt-1 font-pixel-cn">仅保存在本机浏览器，用于你的 AI 请求</p>
+          </div>
           
           {error && (
             <div className="mb-4 p-2 bg-red-900/50 border border-sv-red text-sv-red text-xs font-pixel-cn rounded">
