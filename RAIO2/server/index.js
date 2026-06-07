@@ -8,6 +8,7 @@ import { initDB, getDB, query, run, getOne, saveDB, checkAchievement } from './d
 import { generateToken, authMiddleware } from './auth.js';
 import { streamChat, chatComplete, detectAgent, resolveAgent, AGENTS } from './agents.js';
 import { PORT } from './config.js';
+import { isValidMaasModel } from '../shared/maasModels.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -18,6 +19,19 @@ app.use(express.json());
 function getRequestApiKey(req) {
   const value = req.headers['x-maas-api-key'];
   return Array.isArray(value) ? value[0]?.trim() : value?.trim();
+}
+
+function getRequestModel(req) {
+  const value = req.headers['x-maas-model'];
+  return Array.isArray(value) ? value[0]?.trim() : value?.trim();
+}
+
+function getAIRequestConfig(req) {
+  const apiKey = getRequestApiKey(req);
+  const model = getRequestModel(req);
+  if (!apiKey) return { error: '缺少用户 MaaS API Key，请重新登录并输入自己的 Key' };
+  if (!isValidMaasModel(model)) return { error: '请选择有效的 Huawei MaaS 文本生成模型' };
+  return { apiKey, model };
 }
 
 // 静态资源：星露谷素材
@@ -131,10 +145,8 @@ app.post('/api/chat/stream', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: '消息不能为空' });
     }
 
-    const apiKey = getRequestApiKey(req);
-    if (!apiKey) {
-      return res.status(400).json({ error: '缺少用户 MaaS API Key，请重新登录并输入自己的 Key' });
-    }
+    const aiConfig = getAIRequestConfig(req);
+    if (aiConfig.error) return res.status(400).json({ error: aiConfig.error });
     
     const requestedAgent = agent && agent !== 'auto' ? agent : null;
     const detectedAgent = resolveAgent(requestedAgent, message);
@@ -155,7 +167,7 @@ app.post('/api/chat/stream', authMiddleware, async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
     
-    const context = { agent: requestedAgent || undefined, username, apiKey };
+    const context = { agent: requestedAgent || undefined, username, ...aiConfig };
     const { response: llmResponse, agentKey, agentName, model } = await streamChat(message, history, context);
     
     // 发送 Agent 信息
@@ -364,10 +376,8 @@ app.post('/api/notes/:paperId', authMiddleware, (req, res) => {
 
 app.post('/api/papers/:id/summary', authMiddleware, async (req, res) => {
   try {
-    const apiKey = getRequestApiKey(req);
-    if (!apiKey) {
-      return res.status(400).json({ error: '缺少用户 MaaS API Key，请重新登录并输入自己的 Key' });
-    }
+    const aiConfig = getAIRequestConfig(req);
+    if (aiConfig.error) return res.status(400).json({ error: aiConfig.error });
 
     const paper = getOne(
       "SELECT * FROM papers WHERE id = ? AND user_id = ?",
@@ -401,7 +411,7 @@ arXiv ID：${paper.arxiv_id || ''}
 ## 局限与追问
 列出值得继续阅读原文确认的问题。`;
 
-    const summary = await chatComplete(prompt, [], { agent: 'bookworm', apiKey });
+    const summary = await chatComplete(prompt, [], { agent: 'bookworm', ...aiConfig });
     res.json({ summary });
   } catch (e) {
     console.error('论文总结错误:', e);
@@ -431,10 +441,8 @@ app.post('/api/learn/generate', authMiddleware, async (req, res) => {
   try {
     const { topic } = req.body;
     if (!topic) return res.status(400).json({ error: '请提供学习主题' });
-    const apiKey = getRequestApiKey(req);
-    if (!apiKey) {
-      return res.status(400).json({ error: '缺少用户 MaaS API Key，请重新登录并输入自己的 Key' });
-    }
+    const aiConfig = getAIRequestConfig(req);
+    if (aiConfig.error) return res.status(400).json({ error: aiConfig.error });
     
     const prompt = `请为「${topic}」生成一个学习路径大纲。严格按照以下JSON格式返回，不要包含其他内容：
 {
@@ -454,7 +462,7 @@ app.post('/api/learn/generate', authMiddleware, async (req, res) => {
 }
 生成5-7个章节，从基础到进阶。difficulty范围1-5。外部资源优先给B站、YouTube、菜鸟教程或高质量博客的搜索/教程链接，不要编造不存在的具体课程。`;
     
-    const result = await chatComplete(prompt, [], { agent: 'scholar', apiKey });
+    const result = await chatComplete(prompt, [], { agent: 'scholar', ...aiConfig });
     
     // 解析JSON
     let outline;
@@ -486,10 +494,8 @@ app.post('/api/learn/generate', authMiddleware, async (req, res) => {
 app.post('/api/learn/quiz', authMiddleware, async (req, res) => {
   try {
     const { courseId, chapterIdx, chapterTitle, points } = req.body;
-    const apiKey = getRequestApiKey(req);
-    if (!apiKey) {
-      return res.status(400).json({ error: '缺少用户 MaaS API Key，请重新登录并输入自己的 Key' });
-    }
+    const aiConfig = getAIRequestConfig(req);
+    if (aiConfig.error) return res.status(400).json({ error: aiConfig.error });
     
     const prompt = `请为章节「${chapterTitle}」出4道选择题，涵盖知识点：${points?.join('、') || chapterTitle}。
 严格按以下JSON格式返回，不要包含其他内容：
@@ -505,7 +511,7 @@ app.post('/api/learn/quiz', authMiddleware, async (req, res) => {
 }
 answer是正确答案的索引(0-3)。`;
     
-    const result = await chatComplete(prompt, [], { agent: 'scholar', apiKey });
+    const result = await chatComplete(prompt, [], { agent: 'scholar', ...aiConfig });
     
     let quiz;
     try {
@@ -644,10 +650,8 @@ app.get('/api/news', authMiddleware, async (req, res) => {
 app.post('/api/news/analyze', authMiddleware, async (req, res) => {
   const { item, question } = req.body;
   if (!item?.title) return res.status(400).json({ error: '新闻内容不能为空' });
-  const apiKey = getRequestApiKey(req);
-  if (!apiKey) {
-    return res.status(400).json({ error: '缺少用户 MaaS API Key，请重新登录并输入自己的 Key' });
-  }
+  const aiConfig = getAIRequestConfig(req);
+  if (aiConfig.error) return res.status(400).json({ error: aiConfig.error });
 
   const fallback = `## 解析\n这条资讯的核心是：${item.title}\n\n## 对科研的可能意义\n${item.description || '需要阅读原文进一步确认方法、实验与结论。'}\n\n## 建议追问\n- 它解决了什么具体问题？\n- 方法是否能迁移到我的研究方向？\n- 实验设置是否足够支撑结论？`;
 
@@ -660,7 +664,7 @@ app.post('/api/news/analyze', authMiddleware, async (req, res) => {
 用户追问：${question || '这对我当前研究有什么启发？'}
 
 请输出Markdown，包含：核心内容、研究影响、可追问问题。`;
-    const analysis = await chatComplete(prompt, [], { agent: 'bookworm', apiKey });
+    const analysis = await chatComplete(prompt, [], { agent: 'bookworm', ...aiConfig });
     res.json({ analysis });
   } catch (e) {
     console.error('新闻解析错误:', e.message);

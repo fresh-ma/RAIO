@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../store/AuthContext';
 import { register, login } from '../api';
+import { DEFAULT_MAAS_MODEL, HUAWEI_MAAS_TEXT_MODELS } from '../../shared/maasModels';
 
 export default function LoginPage() {
   const [isRegister, setIsRegister] = useState(false);
@@ -9,6 +10,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [model, setModel] = useState(DEFAULT_MAAS_MODEL);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login: doLogin } = useAuth();
@@ -43,7 +45,7 @@ export default function LoginPage() {
       const data = isRegister
         ? await register(username, password)
         : await login(username, password);
-      doLogin(data.token, data.user, apiKey.trim());
+      doLogin(data.token, data.user, apiKey.trim(), model);
       navigate('/');
     } catch (e) {
       setError(e.message);
@@ -143,6 +145,26 @@ export default function LoginPage() {
               required
             />
             <p className="text-xs text-sv-text2 mt-1 font-pixel-cn">仅保存在本机浏览器，用于你的 AI 请求</p>
+          </div>
+
+          <div className="mb-4">
+            <label className="text-xs text-sv-gold font-pixel-cn mb-1 block">模型</label>
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              className="pixel-input"
+              style={{ appearance: 'auto' }}
+              required
+            >
+              {HUAWEI_MAAS_TEXT_MODELS.map(item => (
+                <option key={item.value} value={item.value}>
+                  {item.label} ({item.value})
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-sv-text2 mt-1 font-pixel-cn">
+              {HUAWEI_MAAS_TEXT_MODELS.find(item => item.value === model)?.note}
+            </p>
           </div>
           
           {error && (

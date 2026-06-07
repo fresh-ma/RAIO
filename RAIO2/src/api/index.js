@@ -11,11 +11,17 @@ function getUserApiKey() {
   return localStorage.getItem('raio_maas_api_key') || '';
 }
 
+function getUserModel() {
+  return localStorage.getItem('raio_maas_model') || '';
+}
+
 function getAIHeaders(token) {
   const apiKey = getUserApiKey();
+  const model = getUserModel();
   return {
     ...getHeaders(token),
     ...(apiKey ? { 'X-MAAS-API-KEY': apiKey } : {}),
+    ...(model ? { 'X-MAAS-MODEL': model } : {}),
   };
 }
 

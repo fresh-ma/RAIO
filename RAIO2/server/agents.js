@@ -1,4 +1,5 @@
-import { AGENT_RUNTIMES, MAAS_API_URL, MAAS_MODEL } from './config.js';
+import { AGENT_RUNTIMES, MAAS_API_URL } from './config.js';
+import { isQwen3Model, isValidMaasModel } from '../shared/maasModels.js';
 
 // Agent 路由：根据意图分发到不同 Agent
 const AGENTS = {
@@ -122,13 +123,28 @@ function resolveAgent(agentKey, userMessage) {
 function getAgentRuntime(agentKey, apiKey) {
   const runtime = AGENT_RUNTIMES[agentKey] || {
     apiUrl: MAAS_API_URL,
-    model: MAAS_MODEL,
   };
 
   return {
     ...runtime,
     apiKey: apiKey || '',
   };
+}
+
+function buildRequestBody(model, messages, stream, maxTokens) {
+  const body = {
+    model,
+    messages,
+    stream,
+    temperature: 0.7,
+    max_tokens: maxTokens,
+  };
+
+  if (isQwen3Model(model)) {
+    body.chat_template_kwargs = { enable_thinking: false };
+  }
+
+  return body;
 }
 
 // 构建消息列表
@@ -150,10 +166,14 @@ function buildMessages(agentKey, userMessage, history = [], context = {}) {
 export async function streamChat(userMessage, history = [], context = {}) {
   const agentKey = resolveAgent(context.agent, userMessage);
   const runtime = getAgentRuntime(agentKey, context.apiKey);
+  const model = context.model;
   const messages = buildMessages(agentKey, userMessage, history, context);
 
   if (!runtime.apiKey) {
     throw new Error('缺少用户 MaaS API Key，请重新登录并输入自己的 Key');
+  }
+  if (!isValidMaasModel(model)) {
+    throw new Error('请选择有效的 Huawei MaaS 文本生成模型');
   }
   
   const response = await fetch(runtime.apiUrl, {
@@ -162,13 +182,7 @@ export async function streamChat(userMessage, history = [], context = {}) {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${runtime.apiKey}`,
     },
-    body: JSON.stringify({
-      model: runtime.model,
-      messages,
-      stream: true,
-      temperature: 0.7,
-      max_tokens: 2048,
-    }),
+    body: JSON.stringify(buildRequestBody(model, messages, true, 2048)),
   });
   
   if (!response.ok) {
@@ -176,17 +190,21 @@ export async function streamChat(userMessage, history = [], context = {}) {
     throw new Error(`大模型API错误: ${response.status} - ${errText}`);
   }
   
-  return { response, agentKey, agentName: AGENTS[agentKey]?.name || agentKey, model: runtime.model };
+  return { response, agentKey, agentName: AGENTS[agentKey]?.name || agentKey, model };
 }
 
 // 非流式调用（用于生成学习大纲、测验等需要完整响应的场景）
 export async function chatComplete(userMessage, history = [], context = {}) {
   const agentKey = resolveAgent(context.agent || 'scholar', userMessage);
   const runtime = getAgentRuntime(agentKey, context.apiKey);
+  const model = context.model;
   const messages = buildMessages(agentKey, userMessage, history, context);
 
   if (!runtime.apiKey) {
     throw new Error('缺少用户 MaaS API Key，请重新登录并输入自己的 Key');
+  }
+  if (!isValidMaasModel(model)) {
+    throw new Error('请选择有效的 Huawei MaaS 文本生成模型');
   }
   
   const response = await fetch(runtime.apiUrl, {
@@ -195,13 +213,7 @@ export async function chatComplete(userMessage, history = [], context = {}) {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${runtime.apiKey}`,
     },
-    body: JSON.stringify({
-      model: runtime.model,
-      messages,
-      stream: false,
-      temperature: 0.7,
-      max_tokens: 4096,
-    }),
+    body: JSON.stringify(buildRequestBody(model, messages, false, 4096)),
   });
   
   if (!response.ok) {

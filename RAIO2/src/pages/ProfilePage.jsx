@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../store/AuthContext';
 import { updateProfile } from '../api';
+import { HUAWEI_MAAS_TEXT_MODELS } from '../../shared/maasModels';
 
 const AVATARS = ['Alex', 'Haley', 'Abigail', 'Emily', 'Sam', 'Sebastian', 'Leah', 'Penny', 'Maru', 'Elliott'];
 const LOCATIONS = [
@@ -10,7 +11,7 @@ const LOCATIONS = [
 ];
 
 export default function ProfilePage() {
-  const { user, token, logout, updateUser } = useAuth();
+  const { user, token, maasModel, logout, updateUser, updateMaasModel } = useAuth();
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
@@ -19,14 +20,17 @@ export default function ProfilePage() {
     location: user?.location || '',
     email: user?.email || '',
     gender: user?.gender || 0,
+    maasModel,
   });
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
     setSaving(true);
     try {
-      await updateProfile(token, form);
-      updateUser(form);
+      const { maasModel: nextMaasModel, ...profileForm } = form;
+      await updateProfile(token, profileForm);
+      updateUser(profileForm);
+      updateMaasModel(nextMaasModel);
       setEditing(false);
     } catch (e) {
       console.error('保存失败:', e);
@@ -144,6 +148,25 @@ export default function ProfilePage() {
                 type="email"
               />
             </div>
+
+            <div>
+              <label className="text-xs text-sv-gold font-pixel-cn mb-1 block">MaaS 模型</label>
+              <select
+                value={form.maasModel}
+                onChange={(e) => setForm(p => ({ ...p, maasModel: e.target.value }))}
+                className="pixel-input text-sm"
+                style={{ appearance: 'auto' }}
+              >
+                {HUAWEI_MAAS_TEXT_MODELS.map(item => (
+                  <option key={item.value} value={item.value}>
+                    {item.label} ({item.value})
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-sv-text2 mt-1 font-pixel-cn">
+                {HUAWEI_MAAS_TEXT_MODELS.find(item => item.value === form.maasModel)?.note}
+              </p>
+            </div>
             
             <div className="flex gap-3">
               <button onClick={handleSave} disabled={saving} className="pixel-btn pixel-btn-gold px-4 py-2 text-xs">
@@ -176,6 +199,10 @@ export default function ProfilePage() {
             <div className="flex justify-between items-center">
               <span className="text-xs text-sv-text2 font-pixel-cn">邮箱</span>
               <span className="text-sm text-sv-cream">{form.email || '未设置'}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-sv-text2 font-pixel-cn">MaaS 模型</span>
+              <span className="text-sm text-sv-cream">{HUAWEI_MAAS_TEXT_MODELS.find(item => item.value === maasModel)?.label || maasModel}</span>
             </div>
             
             <div className="pt-4" style={{ borderTop: '3px dashed #4a4a6a' }}>
