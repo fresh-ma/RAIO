@@ -81,6 +81,11 @@ export async function getAchievements(token) {
   return res.json();
 }
 
+export async function getChatHistory(token) {
+  const res = await fetch(`${API_BASE}/chat/history`, { headers: getHeaders(token) });
+  return res.json();
+}
+
 export async function searchPapers(token, q) {
   const res = await fetch(`${API_BASE}/papers/search?q=${encodeURIComponent(q)}`, { headers: getHeaders(token) });
   return res.json();
@@ -122,6 +127,16 @@ export async function saveNote(token, paperId, content) {
   return res.json();
 }
 
+export async function summarizePaper(token, paperId) {
+  const res = await fetch(`${API_BASE}/papers/${paperId}/summary`, {
+    method: 'POST',
+    headers: getHeaders(token),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '论文总结失败');
+  return data;
+}
+
 export async function getCourses(token) {
   const res = await fetch(`${API_BASE}/learn/courses`, { headers: getHeaders(token) });
   return res.json();
@@ -159,14 +174,25 @@ export async function getNews(token) {
   return res.json();
 }
 
+export async function analyzeNews(token, item, question) {
+  const res = await fetch(`${API_BASE}/news/analyze`, {
+    method: 'POST',
+    headers: getHeaders(token),
+    body: JSON.stringify({ item, question }),
+  });
+  return res.json();
+}
+
 // SSE 流式聊天
 export function streamChat(token, message, agent, onChunk, onDone, onError, onAgentInfo) {
   const controller = new AbortController();
+  const body = { message };
+  if (agent && agent !== 'auto') body.agent = agent;
   
   fetch(`${API_BASE}/chat/stream`, {
     method: 'POST',
     headers: getHeaders(token),
-    body: JSON.stringify({ message, agent }),
+    body: JSON.stringify(body),
     signal: controller.signal,
   })
     .then(async (res) => {

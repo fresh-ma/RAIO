@@ -1,6 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../store/AuthContext';
-import { streamChat, getTodos, addTodo, toggleTodo, deleteTodo, getAchievements } from '../api';
+import { streamChat, getChatHistory, getTodos, addTodo, toggleTodo, deleteTodo, getAchievements } from '../api';
+
+const AGENT_DOCK = [
+  { id: 'lumo', name: '洛墨', role: '总控', icon: '🌙', color: '#6ea8fe' },
+  { id: 'hoot', name: '鸮言', role: '总控', icon: '🦉', color: '#e8b830' },
+  { id: 'bookworm', name: '书蠹', role: '论文', icon: '📚', color: '#4ecdc4' },
+  { id: 'scholar', name: '学者', role: '学习', icon: '🎓', color: '#9bd67d' },
+  { id: 'bloom', name: '花匠', role: '生活', icon: '🌻', color: '#f6c177' },
+  { id: 'gears', name: '齿轮', role: '技术', icon: '⚙️', color: '#c4a7e7' },
+];
+
+const AGENT_MAP = Object.fromEntries(AGENT_DOCK.map(agent => [agent.id, agent]));
+
+function agentLabel(agentId) {
+  if (agentId === 'auto') return '智能路由';
+  return AGENT_MAP[agentId]?.name || agentId || '智能助手';
+}
 
 export default function HomePage() {
   const { user, token } = useAuth();
@@ -8,6 +24,8 @@ export default function HomePage() {
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentAgent, setCurrentAgent] = useState('lumo');
+  const [selectedAgent, setSelectedAgent] = useState('auto');
+  const [currentModel, setCurrentModel] = useState('');
   const [todos, setTodos] = useState([]);
   const [todoInput, setTodoInput] = useState('');
   const [achievements, setAchievements] = useState([]);
@@ -16,21 +34,40 @@ export default function HomePage() {
   const abortRef = useRef(null);
 
   useEffect(() => {
-    loadData();
+    loadInitialData();
   }, [token]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  async function loadData() {
+  async function loadInitialData() {
+    if (!token) return;
+    try {
+      const [t, a, h] = await Promise.all([getTodos(token), getAchievements(token), getChatHistory(token)]);
+      setTodos(t);
+      setAchievements(a);
+      setMessages((h || []).map(msg => ({
+        role: msg.role,
+        content: msg.content,
+        agent: msg.agent,
+        created_at: msg.created_at,
+      })));
+      const lastAgent = [...(h || [])].reverse().find(msg => msg.role === 'assistant' && msg.agent)?.agent;
+      if (lastAgent) setCurrentAgent(lastAgent);
+    } catch (e) {
+      console.error('加载数据失败:', e);
+    }
+  }
+
+  async function refreshSideData() {
     if (!token) return;
     try {
       const [t, a] = await Promise.all([getTodos(token), getAchievements(token)]);
       setTodos(t);
       setAchievements(a);
     } catch (e) {
-      console.error('加载数据失败:', e);
+      console.error('刷新数据失败:', e);
     }
   }
 
@@ -44,19 +81,23 @@ export default function HomePage() {
     
     let fullContent = '';
     
+    let replyAgent = selectedAgent === 'auto'
+      ? (user?.gender === 1 ? 'hoot' : 'lumo')
+      : selectedAgent;
+
     abortRef.current = streamChat(
       token,
       msg,
-      user?.gender === 1 ? 'hoot' : 'lumo',
+      selectedAgent,
       // onChunk
       (chunk) => {
         fullContent += chunk;
         setMessages(prev => {
           const last = prev[prev.length - 1];
           if (last?.role === 'assistant' && last?.streaming) {
-            return [...prev.slice(0, -1), { ...last, content: fullContent }];
+            return [...prev.slice(0, -1), { ...last, content: fullContent, agent: replyAgent }];
           }
-          return [...prev, { role: 'assistant', content: fullContent, streaming: true, agent: currentAgent }];
+          return [...prev, { role: 'assistant', content: fullContent, streaming: true, agent: replyAgent }];
         });
       },
       // onDone
@@ -69,7 +110,7 @@ export default function HomePage() {
           return prev;
         });
         setIsStreaming(false);
-        loadData(); // 刷新成就
+        refreshSideData();
       },
       // onError
       (err) => {
@@ -78,7 +119,9 @@ export default function HomePage() {
       },
       // onAgentInfo
       (info) => {
+        replyAgent = info.agent;
         setCurrentAgent(info.agent);
+        setCurrentModel(info.model || '');
       }
     );
   }
@@ -113,7 +156,7 @@ export default function HomePage() {
   }
 
   const unlockedAchievements = achievements.filter(a => a.unlocked);
-  const agentAvatar = user?.gender === 1 ? '👩' : '👨';
+  const activeAgent = AGENT_MAP[currentAgent] || AGENT_MAP.lumo;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -122,11 +165,12 @@ export default function HomePage() {
         {/* 聊天头部 */}
         <div className="flex items-center justify-between mb-3 pb-2" style={{ borderBottom: '3px dashed #4a4a6a' }}>
           <div className="flex items-center gap-2">
-            <span className="text-2xl">{agentAvatar}</span>
+            <span className="text-2xl">{activeAgent.icon}</span>
             <div>
               <h2 className="pixel-title text-xs">智能助手</h2>
               <p className="text-xs text-sv-text2 font-pixel-cn">
-                {currentAgent === 'hoot' ? '鸮言 / Hoot' : '洛墨 / Lumo'}
+                {agentLabel(currentAgent)} · {selectedAgent === 'auto' ? '自动路由' : '手动指定'}
+                {currentModel ? ` · ${currentModel}` : ''}
               </p>
             </div>
           </div>
@@ -151,9 +195,9 @@ export default function HomePage() {
                   : 'bg-sv-panel2 text-sv-text border border-sv-border'
                 }`}
               >
-                {msg.role === 'assistant' && msg.agent && msg.agent !== 'lumo' && msg.agent !== 'hoot' && (
+                {msg.role === 'assistant' && msg.agent && (
                   <span className="text-xs text-sv-gold block mb-1">
-                    {msg.agent === 'bookworm' ? '📚 书蠹' : msg.agent === 'scholar' ? '🎓 学者' : msg.agent === 'bloom' ? '🌻 花匠' : msg.agent === 'gears' ? '⚙️ 齿轮' : ''}
+                    {AGENT_MAP[msg.agent]?.icon || '✨'} {agentLabel(msg.agent)}
                   </span>
                 )}
                 {msg.content}
@@ -162,6 +206,30 @@ export default function HomePage() {
             </div>
           ))}
           <div ref={chatEndRef} />
+        </div>
+
+        <div className="agent-dock mb-3">
+          <button
+            onClick={() => setSelectedAgent('auto')}
+            className={`agent-dock-item ${selectedAgent === 'auto' ? 'active' : ''}`}
+            title="自动路由"
+            style={{ '--agent-color': '#e8b830' }}
+          >
+            <span className="agent-dock-icon">✨</span>
+            <span>自动</span>
+          </button>
+          {AGENT_DOCK.map(agent => (
+            <button
+              key={agent.id}
+              onClick={() => setSelectedAgent(agent.id)}
+              className={`agent-dock-item ${selectedAgent === agent.id ? 'active' : ''} ${currentAgent === agent.id ? 'speaking' : ''}`}
+              title={`${agent.name} · ${agent.role}`}
+              style={{ '--agent-color': agent.color }}
+            >
+              <span className="agent-dock-icon">{agent.icon}</span>
+              <span>{agent.name}</span>
+            </button>
+          ))}
         </div>
         
         {/* 输入区域 */}

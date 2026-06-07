@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import { initDB, getDB, query, run, getOne, saveDB, checkAchievement } from './db.js';
 import { generateToken, authMiddleware } from './auth.js';
-import { streamChat, chatComplete, detectAgent, AGENTS } from './agents.js';
+import { streamChat, chatComplete, detectAgent, resolveAgent, AGENTS } from './agents.js';
 import { PORT } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -121,16 +121,23 @@ app.post('/api/chat/stream', authMiddleware, async (req, res) => {
     const { message, agent } = req.body;
     const userId = req.user.userId;
     const username = req.user.username;
+
+    if (!message?.trim()) {
+      return res.status(400).json({ error: '消息不能为空' });
+    }
     
-    // 保存用户消息
-    run("INSERT INTO chat_history (user_id, role, content, agent) VALUES (?, ?, ?, ?)",
-      [userId, 'user', message, agent || 'lumo']);
-    
-    // 获取历史
+    const requestedAgent = agent && agent !== 'auto' ? agent : null;
+    const detectedAgent = resolveAgent(requestedAgent, message);
+
+    // 获取当前消息之前的历史，避免把本轮用户消息重复塞进模型上下文
     const history = query(
       "SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT 20",
       [userId]
     ).reverse();
+
+    // 保存用户消息
+    run("INSERT INTO chat_history (user_id, role, content, agent) VALUES (?, ?, ?, ?)",
+      [userId, 'user', message, requestedAgent || detectedAgent]);
     
     // 设置 SSE 头
     res.setHeader('Content-Type', 'text/event-stream');
@@ -138,11 +145,11 @@ app.post('/api/chat/stream', authMiddleware, async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
     
-    const context = { agent: agent || undefined, username };
-    const { response: llmResponse, agentKey, agentName } = await streamChat(message, history, context);
+    const context = { agent: requestedAgent || undefined, username };
+    const { response: llmResponse, agentKey, agentName, model } = await streamChat(message, history, context);
     
     // 发送 Agent 信息
-    res.write(`data: ${JSON.stringify({ type: 'agent', agent: agentKey, name: agentName })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'agent', agent: agentKey, name: agentName, model })}\n\n`);
     
     let fullContent = '';
     const reader = llmResponse.body.getReader();
@@ -184,6 +191,7 @@ app.post('/api/chat/stream', authMiddleware, async (req, res) => {
     if (fullContent) {
       run("INSERT INTO chat_history (user_id, role, content, agent) VALUES (?, ?, ?, ?)",
         [userId, 'assistant', fullContent, agentKey]);
+      saveDB();
       
       // 检查聊天成就
       const chatCount = getOne("SELECT COUNT(*) as cnt FROM chat_history WHERE user_id = ? AND role = 'user'", [userId]);
@@ -206,7 +214,7 @@ app.post('/api/chat/stream', authMiddleware, async (req, res) => {
 // 获取聊天历史
 app.get('/api/chat/history', authMiddleware, (req, res) => {
   const history = query(
-    "SELECT role, content, agent, created_at FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT 50",
+    "SELECT id, role, content, agent, created_at FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT 50",
     [req.user.userId]
   ).reverse();
   res.json(history);
@@ -344,13 +352,61 @@ app.post('/api/notes/:paperId', authMiddleware, (req, res) => {
   res.json({ success: true });
 });
 
+app.post('/api/papers/:id/summary', authMiddleware, async (req, res) => {
+  try {
+    const paper = getOne(
+      "SELECT * FROM papers WHERE id = ? AND user_id = ?",
+      [req.params.id, req.user.userId]
+    );
+    if (!paper) return res.status(404).json({ error: '论文不存在' });
+
+    const note = getOne(
+      "SELECT content FROM notes WHERE paper_id = ? AND user_id = ?",
+      [req.params.id, req.user.userId]
+    );
+
+    const prompt = `请基于下面的论文信息生成中文学术伴读总结，使用Markdown格式，保持严谨，不要编造原文没有的信息。
+
+论文标题：${paper.title || ''}
+作者：${paper.authors || ''}
+arXiv ID：${paper.arxiv_id || ''}
+摘要：${paper.abstract || ''}
+用户笔记：${note?.content || '暂无'}
+
+请按以下结构输出：
+## TL;DR
+用1-2句话概括论文。
+
+## 核心贡献
+列出3点以内，说明每一点依据。
+
+## 方法与实验线索
+概括可能的方法、数据或实验观察；如果摘要不足以判断，请明确说明。
+
+## 局限与追问
+列出值得继续阅读原文确认的问题。`;
+
+    const summary = await chatComplete(prompt, [], { agent: 'bookworm' });
+    res.json({ summary });
+  } catch (e) {
+    console.error('论文总结错误:', e);
+    res.status(500).json({ error: '论文总结失败' });
+  }
+});
+
 // ============ 学习路径路由 ============
 
 app.get('/api/learn/courses', authMiddleware, (req, res) => {
   const courses = query("SELECT * FROM learn_courses WHERE user_id = ? ORDER BY created_at DESC", [req.user.userId]);
   // 附加进度
   for (const c of courses) {
-    c.outline = JSON.parse(c.outline || '[]');
+    try {
+      c.outline = JSON.parse(c.outline || '{}');
+      if (Array.isArray(c.outline)) c.outline = { chapters: c.outline };
+      if (!Array.isArray(c.outline.chapters)) c.outline.chapters = [];
+    } catch (e) {
+      c.outline = { chapters: [] };
+    }
     c.progress = query("SELECT * FROM learn_progress WHERE course_id = ? ORDER BY chapter_idx", [c.id]);
   }
   res.json(courses);
@@ -368,11 +424,16 @@ app.post('/api/learn/generate', authMiddleware, async (req, res) => {
       "title": "章节标题",
       "difficulty": 3,
       "duration": "2小时",
-      "points": ["知识点1", "知识点2", "知识点3"]
+      "summary": "本章核心逻辑，用2-3句话说明为什么要学这一章",
+      "points": ["知识点1", "知识点2", "知识点3"],
+      "resources": [
+        { "type": "video", "label": "推荐搜索关键词", "url": "https://search.bilibili.com/all?keyword=关键词" },
+        { "type": "blog", "label": "图文教程关键词", "url": "https://www.bing.com/search?q=关键词+教程" }
+      ]
     }
   ]
 }
-生成5-7个章节，从基础到进阶。difficulty范围1-5。`;
+生成5-7个章节，从基础到进阶。difficulty范围1-5。外部资源优先给B站、YouTube、菜鸟教程或高质量博客的搜索/教程链接，不要编造不存在的具体课程。`;
     
     const result = await chatComplete(prompt, [], { agent: 'scholar' });
     
@@ -382,8 +443,9 @@ app.post('/api/learn/generate', authMiddleware, async (req, res) => {
       const jsonMatch = result.match(/\{[\s\S]*\}/);
       outline = JSON.parse(jsonMatch[0]);
     } catch (e) {
-      outline = { chapters: [{ title: topic, difficulty: 1, duration: "2小时", points: ["基础知识"] }] };
+      outline = { chapters: [{ title: topic, difficulty: 1, duration: "2小时", summary: "从基础概念开始建立学习框架。", points: ["基础知识"], resources: [] }] };
     }
+    if (!Array.isArray(outline.chapters)) outline.chapters = [];
     
     // 保存课程
     run("INSERT INTO learn_courses (user_id, topic, outline) VALUES (?, ?, ?)",
@@ -462,38 +524,120 @@ app.post('/api/learn/progress', authMiddleware, (req, res) => {
 
 // ============ 新闻路由 ============
 
+function decodeXmlText(value = '') {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/<[^>]*>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function fetchWithTimeout(url, timeout = 7000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function parseNewsItems(text) {
+  const items = [];
+  const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+  let match;
+
+  while ((match = itemRegex.exec(text)) !== null && items.length < 8) {
+    const item = match[1];
+    const titleM = item.match(/<title>([\s\S]*?)<\/title>/);
+    const linkM = item.match(/<link>([\s\S]*?)<\/link>/);
+    const descM = item.match(/<description>([\s\S]*?)<\/description>/);
+    const dateM = item.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
+
+    if (titleM) {
+      items.push({
+        title: decodeXmlText(titleM[1]),
+        url: linkM ? decodeXmlText(linkM[1]) : '',
+        description: decodeXmlText(descM?.[1] || '').slice(0, 420),
+        publishedAt: dateM ? decodeXmlText(dateM[1]) : '',
+        source: 'arXiv cs.AI',
+      });
+    }
+  }
+
+  return items;
+}
+
+function fallbackNews() {
+  return [
+    {
+      title: 'arXiv cs.AI 暂时无法连接，已启用离线资讯占位',
+      description: '网络或上游 RSS 不稳定时，RAIO 会保持新闻页可见。稍后刷新即可重新拉取最新学术动态。',
+      url: 'https://arxiv.org/list/cs.AI/recent',
+      publishedAt: new Date().toISOString(),
+      source: 'RAIO fallback',
+    },
+    {
+      title: '建议关注：多智能体、检索增强生成、科研工作流自动化',
+      description: '这些方向与 RAIO 当前的 Agent 路由、论文伴读和学习路径功能高度相关，可作为近期阅读关键词。',
+      url: 'https://arxiv.org/search/cs?query=multi-agent+retrieval+augmented+generation+research+workflow&searchtype=all',
+      publishedAt: new Date().toISOString(),
+      source: 'RAIO fallback',
+    },
+  ];
+}
+
+function buildDigest(items) {
+  return {
+    date: new Date().toLocaleDateString('zh-CN'),
+    bullets: items.slice(0, 3).map((item, idx) => ({
+      title: `#${idx + 1} ${item.title}`,
+      detail: item.description || '建议打开原文查看摘要与方法细节。',
+    })),
+  };
+}
+
 app.get('/api/news', authMiddleware, async (req, res) => {
   try {
-    // 简化版：从 arXiv RSS 获取最新论文作为学术新闻
-    const url = 'http://export.arxiv.org/rss/cs.AI';
-    const response = await fetch(url);
+    const url = 'https://export.arxiv.org/rss/cs.AI';
+    const response = await fetchWithTimeout(url);
+    if (!response.ok) throw new Error(`RSS ${response.status}`);
     const text = await response.text();
-    
-    // 解析 RSS 中的条目
-    const items = [];
-    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-    let match;
-    let count = 0;
-    while ((match = itemRegex.exec(text)) !== null && count < 8) {
-      const item = match[1];
-      const titleM = item.match(/<title>([\s\S]*?)<\/title>/);
-      const linkM = item.match(/<link>([\s\S]*?)<\/link>/);
-      const descM = item.match(/<description>([\s\S]*?)<\/description>/);
-      
-      if (titleM) {
-        items.push({
-          title: titleM[1].replace(/&lt;.*?&gt;/g, '').trim(),
-          url: linkM ? linkM[1].trim() : '',
-          description: descM ? descM[1].replace(/<[^>]*>/g, '').substring(0, 200) : '',
-        });
-        count++;
-      }
-    }
-    
-    res.json({ news: items });
+    const items = parseNewsItems(text);
+    const news = items.length ? items : fallbackNews();
+    res.json({ news, digest: buildDigest(news), fallback: items.length === 0 });
   } catch (e) {
     console.error('获取新闻错误:', e);
-    res.json({ news: [] });
+    const news = fallbackNews();
+    res.json({ news, digest: buildDigest(news), fallback: true });
+  }
+});
+
+app.post('/api/news/analyze', authMiddleware, async (req, res) => {
+  const { item, question } = req.body;
+  if (!item?.title) return res.status(400).json({ error: '新闻内容不能为空' });
+
+  const fallback = `## 解析\n这条资讯的核心是：${item.title}\n\n## 对科研的可能意义\n${item.description || '需要阅读原文进一步确认方法、实验与结论。'}\n\n## 建议追问\n- 它解决了什么具体问题？\n- 方法是否能迁移到我的研究方向？\n- 实验设置是否足够支撑结论？`;
+
+  try {
+    const prompt = `请作为科研资讯分析助手，用中文解析下面这条学术新闻。保持谨慎，不要编造原文没有的信息。
+
+标题：${item.title}
+摘要/描述：${item.description || ''}
+来源：${item.source || ''}
+用户追问：${question || '这对我当前研究有什么启发？'}
+
+请输出Markdown，包含：核心内容、研究影响、可追问问题。`;
+    const analysis = await chatComplete(prompt, [], { agent: 'bookworm' });
+    res.json({ analysis });
+  } catch (e) {
+    console.error('新闻解析错误:', e.message);
+    res.json({ analysis: fallback, fallback: true });
   }
 });
 

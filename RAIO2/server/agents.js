@@ -1,4 +1,4 @@
-import { MAAS_API_URL, MAAS_API_KEY, MAAS_MODEL } from './config.js';
+import { AGENT_RUNTIMES, MAAS_API_URL, MAAS_API_KEY, MAAS_MODEL } from './config.js';
 
 // Agent 路由：根据意图分发到不同 Agent
 const AGENTS = {
@@ -8,6 +8,8 @@ const AGENTS = {
     description: '调度Agent，负责理解用户意图并分配任务',
     gender: 'male',
     avatar: 'Alex',
+    icon: '🌙',
+    color: '#6ea8fe',
   },
   hoot: {
     name: '鸮言 / Hoot',
@@ -15,26 +17,36 @@ const AGENTS = {
     description: '调度Agent，负责理解用户意图并分配任务',
     gender: 'female',
     avatar: 'Haley',
+    icon: '🦉',
+    color: '#e8b830',
   },
   bookworm: {
     name: '书蠹 / Bookworm',
     role: 'paper',
     description: '论文相关Agent，擅长论文搜索、总结、推荐',
+    icon: '📚',
+    color: '#4ecdc4',
   },
   scholar: {
     name: '学者 / Scholar',
     role: 'learn',
     description: '学习路径Agent，擅长制定学习计划、出题测验',
+    icon: '🎓',
+    color: '#9bd67d',
   },
   bloom: {
     name: '花匠 / Bloom',
     role: 'life',
     description: '生活管理Agent，擅长待办管理、情绪关怀',
+    icon: '🌻',
+    color: '#f6c177',
   },
   gears: {
     name: '齿轮 / Gears',
     role: 'server',
     description: '技术服务Agent，擅长服务器运维、编程辅助',
+    icon: '⚙️',
+    color: '#c4a7e7',
   }
 };
 
@@ -102,6 +114,19 @@ function detectAgent(message) {
   return 'lumo';
 }
 
+function resolveAgent(agentKey, userMessage) {
+  if (agentKey && agentKey !== 'auto' && AGENTS[agentKey]) return agentKey;
+  return detectAgent(userMessage);
+}
+
+function getAgentRuntime(agentKey) {
+  return AGENT_RUNTIMES[agentKey] || {
+    apiUrl: MAAS_API_URL,
+    apiKey: MAAS_API_KEY,
+    model: MAAS_MODEL,
+  };
+}
+
 // 构建消息列表
 function buildMessages(agentKey, userMessage, history = [], context = {}) {
   const systemPrompt = getAgentSystemPrompt(agentKey, context);
@@ -119,17 +144,18 @@ function buildMessages(agentKey, userMessage, history = [], context = {}) {
 
 // SSE 流式调用大模型
 export async function streamChat(userMessage, history = [], context = {}) {
-  const agentKey = context.agent || detectAgent(userMessage);
+  const agentKey = resolveAgent(context.agent, userMessage);
+  const runtime = getAgentRuntime(agentKey);
   const messages = buildMessages(agentKey, userMessage, history, context);
   
-  const response = await fetch(MAAS_API_URL, {
+  const response = await fetch(runtime.apiUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${MAAS_API_KEY}`,
+      'Authorization': `Bearer ${runtime.apiKey}`,
     },
     body: JSON.stringify({
-      model: MAAS_MODEL,
+      model: runtime.model,
       messages,
       stream: true,
       temperature: 0.7,
@@ -142,22 +168,23 @@ export async function streamChat(userMessage, history = [], context = {}) {
     throw new Error(`大模型API错误: ${response.status} - ${errText}`);
   }
   
-  return { response, agentKey, agentName: AGENTS[agentKey]?.name || agentKey };
+  return { response, agentKey, agentName: AGENTS[agentKey]?.name || agentKey, model: runtime.model };
 }
 
 // 非流式调用（用于生成学习大纲、测验等需要完整响应的场景）
 export async function chatComplete(userMessage, history = [], context = {}) {
-  const agentKey = context.agent || 'scholar';
+  const agentKey = resolveAgent(context.agent || 'scholar', userMessage);
+  const runtime = getAgentRuntime(agentKey);
   const messages = buildMessages(agentKey, userMessage, history, context);
   
-  const response = await fetch(MAAS_API_URL, {
+  const response = await fetch(runtime.apiUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${MAAS_API_KEY}`,
+      'Authorization': `Bearer ${runtime.apiKey}`,
     },
     body: JSON.stringify({
-      model: MAAS_MODEL,
+      model: runtime.model,
       messages,
       stream: false,
       temperature: 0.7,
@@ -174,4 +201,4 @@ export async function chatComplete(userMessage, history = [], context = {}) {
   return data.choices?.[0]?.message?.content || '';
 }
 
-export { AGENTS, getAgentSystemPrompt, detectAgent };
+export { AGENTS, getAgentSystemPrompt, detectAgent, resolveAgent };

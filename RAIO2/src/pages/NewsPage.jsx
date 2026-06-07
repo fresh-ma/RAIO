@@ -1,11 +1,26 @@
 import React, { useState, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { useAuth } from '../store/AuthContext';
-import { getNews } from '../api';
+import { getNews, analyzeNews } from '../api';
+
+function MarkdownBlock({ content }) {
+  return (
+    <div className="markdown-preview font-pixel-cn">
+      <ReactMarkdown>{content || '暂无解析'}</ReactMarkdown>
+    </div>
+  );
+}
 
 export default function NewsPage() {
   const { token } = useAuth();
   const [news, setNews] = useState([]);
+  const [digest, setDigest] = useState(null);
+  const [fallback, setFallback] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [activeItem, setActiveItem] = useState(null);
+  const [analysis, setAnalysis] = useState('');
+  const [question, setQuestion] = useState('');
+  const [analysisLoading, setAnalysisLoading] = useState(false);
 
   useEffect(() => {
     loadNews();
@@ -17,6 +32,8 @@ export default function NewsPage() {
     try {
       const data = await getNews(token);
       setNews(data.news || []);
+      setDigest(data.digest || null);
+      setFallback(Boolean(data.fallback));
     } catch (e) {
       console.error('加载新闻失败:', e);
     } finally {
@@ -24,13 +41,100 @@ export default function NewsPage() {
     }
   }
 
+  async function openAnalysis(item) {
+    setActiveItem(item);
+    setAnalysis('');
+    setQuestion('');
+    setAnalysisLoading(true);
+    try {
+      const data = await analyzeNews(token, item, '');
+      setAnalysis(data.analysis || '');
+    } catch (e) {
+      setAnalysis('解析失败，请稍后重试。');
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }
+
+  async function askFollowup() {
+    if (!activeItem) return;
+    setAnalysisLoading(true);
+    try {
+      const data = await analyzeNews(token, activeItem, question);
+      setAnalysis(data.analysis || '');
+    } catch (e) {
+      setAnalysis('解析失败，请稍后重试。');
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }
+
   return (
     <div>
-      <div className="flex items-center gap-3 mb-4">
-        <h2 className="pixel-title text-sm">📰 八卦早知道</h2>
-        <span className="text-xs text-sv-text2 font-pixel-cn">学术前沿一手掌握</span>
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-3">
+          <h2 className="pixel-title text-sm">📰 八卦早知道</h2>
+          <span className="text-xs text-sv-text2 font-pixel-cn">学术前沿一手掌握</span>
+        </div>
+        <button onClick={loadNews} disabled={loading} className="pixel-btn pixel-btn-teal px-3 py-1 text-xs">
+          刷新
+        </button>
       </div>
-      
+
+      {digest && (
+        <div className="pixel-panel mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="pixel-title text-xs">AI 每日晨报</h3>
+            <span className="text-xs text-sv-text2">{digest.date}</span>
+          </div>
+          {fallback && <p className="text-xs text-sv-gold font-pixel-cn mb-3">当前使用备用资讯源</p>}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {(digest.bullets || []).map((item, i) => (
+              <div key={i} className="news-brief">
+                <p className="text-xs text-sv-gold font-pixel-cn mb-2">{item.title}</p>
+                <p className="text-xs text-sv-text2 leading-relaxed">{item.detail}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeItem && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setActiveItem(null)}>
+          <div className="pixel-panel w-full max-w-3xl max-h-[82vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h3 className="pixel-title text-xs">AI 解析</h3>
+                <p className="text-xs text-sv-text2 mt-2 font-pixel-cn">{activeItem.title}</p>
+              </div>
+              <button onClick={() => setActiveItem(null)} className="text-sv-red text-lg"
+                style={{ border: 'none', background: 'none', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto min-h-[280px] mb-3">
+              {analysisLoading ? (
+                <p className="text-xs text-sv-text2 font-pixel-cn">⏳ 解析中...</p>
+              ) : (
+                <MarkdownBlock content={analysis} />
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && askFollowup()}
+                className="pixel-input flex-1 text-xs"
+                placeholder="继续追问这条资讯..."
+              />
+              <button onClick={askFollowup} disabled={analysisLoading} className="pixel-btn pixel-btn-gold px-3 text-xs">
+                追问
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="pixel-panel text-center py-12">
           <p className="font-pixel-cn text-sm text-sv-text2">⏳ 加载中...</p>
@@ -47,16 +151,25 @@ export default function NewsPage() {
               <div className="flex items-start gap-3">
                 <span className="text-2xl mt-1">📄</span>
                 <div className="flex-1">
-                  <h3 className="text-sm text-sv-gold font-pixel-cn mb-1 leading-relaxed">{item.title}</h3>
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                    <h3 className="text-sm text-sv-gold font-pixel-cn leading-relaxed">{item.title}</h3>
+                    {item.source && <span className="text-xs text-sv-teal">{item.source}</span>}
+                  </div>
                   {item.description && (
                     <p className="text-xs text-sv-text2 leading-relaxed mb-2 line-clamp-3">{item.description}</p>
                   )}
-                  {item.url && (
-                    <a href={item.url} target="_blank" rel="noopener"
-                      className="text-xs text-sv-teal hover:underline font-pixel-cn">
-                      🔗 查看原文 →
-                    </a>
-                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => openAnalysis(item)} className="pixel-btn pixel-btn-teal px-2 py-1 text-xs">
+                      AI解析
+                    </button>
+                    {item.url && (
+                      <a href={item.url} target="_blank" rel="noopener noreferrer"
+                        className="pixel-btn px-2 py-1 text-xs bg-sv-dark text-sv-cream"
+                        style={{ border: '3px solid #4a4a6a', textDecoration: 'none' }}>
+                        原文
+                      </a>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
