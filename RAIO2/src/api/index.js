@@ -99,6 +99,11 @@ export async function getAchievements(token) {
   return res.json();
 }
 
+export async function getGlobalRadar(token) {
+  const res = await fetch(`${API_BASE}/global/radar`, { headers: getHeaders(token) });
+  return res.json();
+}
+
 export async function getChatHistory(token) {
   const res = await fetch(`${API_BASE}/chat/history`, { headers: getHeaders(token) });
   return res.json();
@@ -199,6 +204,17 @@ export async function analyzeNews(token, item, question) {
     body: JSON.stringify({ item, question }),
   });
   return res.json();
+}
+
+export async function followNews(token, item) {
+  const res = await fetch(`${API_BASE}/news/follow`, {
+    method: 'POST',
+    headers: getAIHeaders(token),
+    body: JSON.stringify({ item }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '联动失败');
+  return data;
 }
 
 // SSE 流式聊天

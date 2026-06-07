@@ -9,6 +9,12 @@ import { generateToken, authMiddleware } from './auth.js';
 import { streamChat, chatComplete, detectAgent, resolveAgent, AGENTS } from './agents.js';
 import { PORT } from './config.js';
 import { isValidMaasModel } from '../shared/maasModels.js';
+import {
+  buildUserRagContext,
+  getGlobalRadar,
+  recordDailyNewsRead,
+  recordMemoryEvent,
+} from './globalMemory.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -156,6 +162,7 @@ app.post('/api/chat/stream', authMiddleware, async (req, res) => {
       "SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT 20",
       [userId]
     ).reverse();
+    const globalMemory = buildUserRagContext(userId, message);
 
     // 保存用户消息
     run("INSERT INTO chat_history (user_id, role, content, agent) VALUES (?, ?, ?, ?)",
@@ -167,7 +174,12 @@ app.post('/api/chat/stream', authMiddleware, async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
     
-    const context = { agent: requestedAgent || undefined, username, ...aiConfig };
+    const context = {
+      agent: requestedAgent || undefined,
+      username,
+      globalMemoryContext: globalMemory.contextText,
+      ...aiConfig,
+    };
     const { response: llmResponse, agentKey, agentName, model } = await streamChat(message, history, context);
     
     // 发送 Agent 信息
@@ -219,6 +231,15 @@ app.post('/api/chat/stream', authMiddleware, async (req, res) => {
       const chatCount = getOne("SELECT COUNT(*) as cnt FROM chat_history WHERE user_id = ? AND role = 'user'", [userId]);
       if (chatCount?.cnt >= 1) checkAchievement(userId, 'first_chat');
       if (chatCount?.cnt >= 10) checkAchievement(userId, 'chat_10');
+      recordMemoryEvent(userId, {
+        sourceType: 'home_chat',
+        sourceId: String(chatCount?.cnt || ''),
+        title: `主页问答：${message}`,
+        content: `用户：${message}\n助手：${fullContent}`,
+        tags: ['主页助手', agentKey, model],
+        weight: 1.2,
+        awards: { synthesis: 3, reflection: message.length > 18 ? 2 : 1 },
+      });
     }
     
     res.end();
@@ -254,6 +275,16 @@ app.post('/api/todos', authMiddleware, (req, res) => {
   if (!content) return res.status(400).json({ error: '待办内容不能为空' });
   
   run("INSERT INTO todos (user_id, content) VALUES (?, ?)", [req.user.userId, content]);
+  const todo = getOne("SELECT * FROM todos WHERE user_id = ? ORDER BY id DESC LIMIT 1", [req.user.userId]);
+  recordMemoryEvent(req.user.userId, {
+    sourceType: 'todo_add',
+    sourceId: String(todo?.id || ''),
+    title: `新增待办：${content}`,
+    content,
+    tags: ['待办', '行动'],
+    weight: 0.8,
+    awards: { execution: 2 },
+  });
   
   // 检查成就
   checkAchievement(req.user.userId, 'first_todo');
@@ -267,6 +298,18 @@ app.post('/api/todos', authMiddleware, (req, res) => {
 app.put('/api/todos/:id', authMiddleware, (req, res) => {
   const { done } = req.body;
   run("UPDATE todos SET done = ? WHERE id = ? AND user_id = ?", [done ? 1 : 0, req.params.id, req.user.userId]);
+  if (done) {
+    const todo = getOne("SELECT content FROM todos WHERE id = ? AND user_id = ?", [req.params.id, req.user.userId]);
+    recordMemoryEvent(req.user.userId, {
+      sourceType: 'todo_done',
+      sourceId: String(req.params.id),
+      title: `完成待办：${todo?.content || req.params.id}`,
+      content: todo?.content || '',
+      tags: ['待办', '完成'],
+      weight: 1.2,
+      awards: { execution: 6 },
+    });
+  }
   const todos = query("SELECT * FROM todos WHERE user_id = ? ORDER BY created_at DESC", [req.user.userId]);
   res.json(todos);
 });
@@ -284,38 +327,183 @@ app.get('/api/achievements', authMiddleware, (req, res) => {
   res.json(all);
 });
 
+// ============ 全局画像 / 记忆路由 ============
+
+app.get('/api/global/radar', authMiddleware, (req, res) => {
+  res.json(getGlobalRadar(req.user.userId));
+});
+
 // ============ 论文/图书馆路由 ============
+
+function parseArxivEntries(xml, limit = 5) {
+  const entries = [];
+  const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+  let match;
+
+  while ((match = entryRegex.exec(xml)) !== null && entries.length < limit) {
+    const entry = match[1];
+    const getTag = (tag) => {
+      const m = entry.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`));
+      return m ? decodeXmlText(m[1]).trim() : '';
+    };
+    const arxivId = getTag('id').replace('http://arxiv.org/abs/', '').replace('https://arxiv.org/abs/', '');
+    entries.push({
+      arxiv_id: arxivId,
+      title: getTag('title').replace(/\n/g, ' ').trim(),
+      authors: [...entry.matchAll(/<name>(.*?)<\/name>/g)].map(m => decodeXmlText(m[1])).join(', '),
+      abstract: getTag('summary').replace(/\n/g, ' ').trim(),
+      url: `https://arxiv.org/abs/${arxivId}`,
+    });
+  }
+
+  return entries;
+}
+
+async function searchArxivPapers(q, limit = 5) {
+  const url = `http://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(q)}&start=0&max_results=${limit}&sortBy=relevance&sortOrder=descending`;
+  const response = await fetchWithTimeout(url, 9000);
+  if (!response.ok) throw new Error(`arXiv ${response.status}`);
+  return parseArxivEntries(await response.text(), limit);
+}
+
+function extractArxivId(url = '') {
+  const match = String(url).match(/arxiv\.org\/(?:abs|pdf)\/([^?#/]+)/i);
+  return match?.[1]?.replace(/\.pdf$/i, '') || '';
+}
+
+function inferNewsTopic(item = {}) {
+  const raw = `${item.title || ''} ${item.description || ''}`;
+  const latin = raw.match(/[A-Za-z][A-Za-z0-9+.-]{2,}/g) || [];
+  const chinese = raw.match(/[\u4e00-\u9fa5]{2,8}/g) || [];
+  const stop = new Set(['using', 'with', 'from', 'towards', 'through', 'based', 'about', 'paper']);
+  const terms = [...latin, ...chinese]
+    .map(term => term.trim())
+    .filter(term => term.length >= 2 && !stop.has(term.toLowerCase()));
+  return [...new Set(terms)].slice(0, 6).join(' ') || item.title || 'AI frontier';
+}
+
+function fallbackMicroOutline(topic, item = {}) {
+  const keyword = encodeURIComponent(topic);
+  return {
+    chapters: [
+      {
+        title: `快速读懂：${topic}`,
+        difficulty: 2,
+        duration: '30分钟',
+        summary: `先厘清「${topic}」解决的问题、输入输出和核心假设。`,
+        points: ['问题定义', '关键术语', '适用边界'],
+        resources: [
+          { type: 'paper', label: 'arXiv 相关论文', url: `https://arxiv.org/search/?query=${keyword}&searchtype=all` },
+        ],
+      },
+      {
+        title: '方法拆解与对照',
+        difficulty: 3,
+        duration: '45分钟',
+        summary: '把新闻中的新方法拆成模块，并和你已收藏/学习过的方向做对照。',
+        points: ['方法结构', '对比基线', '可能迁移点'],
+        resources: [
+          { type: 'blog', label: '方法教程搜索', url: `https://www.bing.com/search?q=${keyword}+method+tutorial` },
+        ],
+      },
+      {
+        title: '形成个人研究问题',
+        difficulty: 3,
+        duration: '30分钟',
+        summary: '输出一个可验证的小问题，决定是否进入深入阅读。',
+        points: ['可复现实验', '风险假设', '下一篇必读文献'],
+        resources: item.url ? [{ type: 'news', label: '新闻原文', url: item.url }] : [],
+      },
+    ],
+  };
+}
+
+async function createMicroCourse(userId, topic, item, aiConfig) {
+  let outline = fallbackMicroOutline(topic, item);
+
+  if (!aiConfig.error) {
+    try {
+      const prompt = `请基于下面的学术资讯，为用户生成一个“微学习路径”。严格返回JSON，不要包含其他内容。
+{
+  "chapters": [
+    {
+      "title": "章节标题",
+      "difficulty": 2,
+      "duration": "30分钟",
+      "summary": "学习目标",
+      "points": ["知识点1", "知识点2"],
+      "resources": [
+        { "type": "paper", "label": "推荐搜索关键词", "url": "https://arxiv.org/search/?query=关键词&searchtype=all" }
+      ]
+    }
+  ]
+}
+资讯标题：${item.title || topic}
+资讯描述：${item.description || ''}
+主题关键词：${topic}
+要求：生成3个章节，资源链接只使用搜索链接或用户提供的原文链接，不要编造具体课程。`;
+      const result = await chatComplete(prompt, [], { agent: 'scholar', ...aiConfig });
+      const jsonMatch = result.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(parsed.chapters) && parsed.chapters.length) outline = parsed;
+    } catch (e) {
+      console.error('微学习路径生成降级:', e.message);
+    }
+  }
+
+  run(
+    'INSERT INTO learn_courses (user_id, topic, outline) VALUES (?, ?, ?)',
+    [userId, `微学习：${topic.slice(0, 60)}`, JSON.stringify(outline)]
+  );
+
+  const course = getOne(
+    'SELECT * FROM learn_courses WHERE user_id = ? ORDER BY id DESC LIMIT 1',
+    [userId]
+  );
+  course.outline = outline;
+  course.progress = [];
+  return course;
+}
+
+async function saveCorePaperForNews(userId, item, topic) {
+  const arxivId = extractArxivId(item.url);
+  const directPaper = arxivId
+    ? {
+        arxiv_id: arxivId,
+        title: item.title,
+        authors: item.source || '',
+        abstract: item.description || '',
+        url: `https://arxiv.org/abs/${arxivId}`,
+      }
+    : null;
+
+  const candidates = directPaper ? [directPaper] : await searchArxivPapers(topic, 1);
+  const paper = candidates[0];
+  if (!paper?.arxiv_id) return null;
+
+  const existing = getOne(
+    'SELECT * FROM papers WHERE user_id = ? AND arxiv_id = ?',
+    [userId, paper.arxiv_id]
+  );
+  if (existing) return { ...existing, alreadySaved: true };
+
+  run(
+    'INSERT INTO papers (user_id, arxiv_id, title, authors, abstract, url) VALUES (?, ?, ?, ?, ?, ?)',
+    [userId, paper.arxiv_id, paper.title, paper.authors, paper.abstract, paper.url]
+  );
+
+  return getOne(
+    'SELECT * FROM papers WHERE user_id = ? ORDER BY id DESC LIMIT 1',
+    [userId]
+  );
+}
 
 app.get('/api/papers/search', authMiddleware, async (req, res) => {
   try {
     const { q } = req.query;
     if (!q) return res.status(400).json({ error: '请提供搜索关键词' });
-    
-    const url = `http://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(q)}&start=0&max_results=5&sortBy=relevance&sortOrder=descending`;
-    const response = await fetch(url);
-    const xml = await response.text();
-    
-    // 简单 XML 解析
-    const entries = [];
-    const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
-    let match;
-    while ((match = entryRegex.exec(xml)) !== null) {
-      const entry = match[1];
-      const getTag = (tag) => {
-        const m = entry.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`));
-        return m ? m[1].trim() : '';
-      };
-      const arxivId = getTag('id').replace('http://arxiv.org/abs/', '');
-      entries.push({
-        arxiv_id: arxivId,
-        title: getTag('title').replace(/\n/g, ' ').trim(),
-        authors: [...entry.matchAll(/<name>(.*?)<\/name>/g)].map(m => m[1]).join(', '),
-        abstract: getTag('summary').replace(/\n/g, ' ').trim(),
-        url: `https://arxiv.org/abs/${arxivId}`,
-      });
-    }
-    
-    res.json({ papers: entries, query: q });
+
+    res.json({ papers: await searchArxivPapers(q, 5), query: q });
   } catch (e) {
     console.error('论文搜索错误:', e);
     res.status(500).json({ error: '论文搜索失败' });
@@ -336,6 +524,19 @@ app.post('/api/papers/save', authMiddleware, (req, res) => {
   
   run("INSERT INTO papers (user_id, arxiv_id, title, authors, abstract, url) VALUES (?, ?, ?, ?, ?, ?)",
     [req.user.userId, arxiv_id, title, authors, abstract, url]);
+  const savedPaper = getOne(
+    "SELECT * FROM papers WHERE user_id = ? AND arxiv_id = ?",
+    [req.user.userId, arxiv_id]
+  );
+  recordMemoryEvent(req.user.userId, {
+    sourceType: 'paper_save',
+    sourceId: String(savedPaper?.id || arxiv_id),
+    title: `收藏论文：${title || arxiv_id}`,
+    content: `作者：${authors || '未知'}\n摘要：${abstract || '暂无'}`,
+    tags: ['图书馆', '论文', arxiv_id],
+    weight: 1.8,
+    awards: { literature: 12, frontier: 4 },
+  });
   
   // 检查成就
   checkAchievement(req.user.userId, 'first_paper');
@@ -370,6 +571,16 @@ app.post('/api/notes/:paperId', authMiddleware, (req, res) => {
     run("INSERT INTO notes (user_id, paper_id, content) VALUES (?, ?, ?)", [req.user.userId, req.params.paperId, content]);
     checkAchievement(req.user.userId, 'first_note');
   }
+  const paper = getOne("SELECT title, arxiv_id FROM papers WHERE id = ? AND user_id = ?", [req.params.paperId, req.user.userId]);
+  recordMemoryEvent(req.user.userId, {
+    sourceType: 'paper_note',
+    sourceId: String(req.params.paperId),
+    title: `更新论文笔记：${paper?.title || paper?.arxiv_id || req.params.paperId}`,
+    content,
+    tags: ['图书馆', '笔记'],
+    weight: content?.length > 500 ? 2.2 : 1.5,
+    awards: { literature: 8, reflection: content?.length > 500 ? 10 : 5 },
+  });
   
   res.json({ success: true });
 });
@@ -412,6 +623,15 @@ arXiv ID：${paper.arxiv_id || ''}
 列出值得继续阅读原文确认的问题。`;
 
     const summary = await chatComplete(prompt, [], { agent: 'bookworm', ...aiConfig });
+    recordMemoryEvent(req.user.userId, {
+      sourceType: 'paper_summary',
+      sourceId: String(req.params.id),
+      title: `AI伴读总结：${paper.title || paper.arxiv_id}`,
+      content: summary,
+      tags: ['图书馆', 'AI总结'],
+      weight: 2.3,
+      awards: { literature: 6, synthesis: 8 },
+    });
     res.json({ summary });
   } catch (e) {
     console.error('论文总结错误:', e);
@@ -481,6 +701,15 @@ app.post('/api/learn/generate', authMiddleware, async (req, res) => {
     const course = getOne("SELECT * FROM learn_courses WHERE user_id = ? ORDER BY id DESC LIMIT 1", [req.user.userId]);
     course.outline = outline;
     course.progress = [];
+    recordMemoryEvent(req.user.userId, {
+      sourceType: 'learn_course',
+      sourceId: String(course.id),
+      title: `生成学习路径：${topic}`,
+      content: (outline.chapters || []).map((chapter, index) => `${index + 1}. ${chapter.title}: ${(chapter.points || []).join('、')}`).join('\n'),
+      tags: ['大师之路', '学习路径'],
+      weight: 1.8,
+      awards: { learning: 18, execution: 4 },
+    });
     
     checkAchievement(req.user.userId, 'first_learn');
     
@@ -547,6 +776,29 @@ app.post('/api/learn/progress', authMiddleware, (req, res) => {
   if (status === 'passed') {
     checkAchievement(req.user.userId, 'first_quiz');
   }
+  const course = getOne(
+    "SELECT topic, outline FROM learn_courses WHERE id = ? AND user_id = ?",
+    [courseId, req.user.userId]
+  );
+  let chapterTitle = `第${Number(chapterIdx) + 1}章`;
+  try {
+    const outline = JSON.parse(course?.outline || '{}');
+    chapterTitle = outline.chapters?.[chapterIdx]?.title || chapterTitle;
+  } catch (e) {
+    // 保留默认章节名
+  }
+  recordMemoryEvent(req.user.userId, {
+    sourceType: 'learn_progress',
+    sourceId: `${courseId}:${chapterIdx}`,
+    title: `学习进度：${course?.topic || '学习路径'} / ${chapterTitle}`,
+    content: `状态：${status}，得分：${score || 0}`,
+    tags: ['大师之路', status],
+    weight: status === 'passed' ? 2 : 1.2,
+    awards: {
+      learning: status === 'passed' ? 12 : 5,
+      execution: status === 'passed' ? 8 : 4,
+    },
+  });
   
   res.json({ success: true });
 });
@@ -639,10 +891,12 @@ app.get('/api/news', authMiddleware, async (req, res) => {
     const text = await response.text();
     const items = parseNewsItems(text);
     const news = items.length ? items : fallbackNews();
+    recordDailyNewsRead(req.user.userId);
     res.json({ news, digest: buildDigest(news), fallback: items.length === 0 });
   } catch (e) {
     console.error('获取新闻错误:', e);
     const news = fallbackNews();
+    recordDailyNewsRead(req.user.userId);
     res.json({ news, digest: buildDigest(news), fallback: true });
   }
 });
@@ -670,6 +924,71 @@ app.post('/api/news/analyze', authMiddleware, async (req, res) => {
     console.error('新闻解析错误:', e.message);
     res.json({ analysis: fallback, fallback: true });
   }
+});
+
+app.post('/api/news/follow', authMiddleware, async (req, res) => {
+  const { item } = req.body;
+  if (!item?.title) return res.status(400).json({ error: '新闻内容不能为空' });
+
+  const aiConfig = getAIRequestConfig(req);
+  const topic = inferNewsTopic(item);
+  let savedPaper = null;
+  let course = null;
+  let paperError = '';
+
+  recordMemoryEvent(req.user.userId, {
+    sourceType: 'news_focus',
+    sourceId: item.url || item.title,
+    title: `关注前沿：${item.title}`,
+    content: `${item.description || ''}\n来源：${item.source || ''}\n链接：${item.url || ''}`,
+    tags: ['新闻视野', topic],
+    weight: 2.4,
+    awards: { frontier: 18, synthesis: 8, execution: 4 },
+  });
+
+  try {
+    savedPaper = await saveCorePaperForNews(req.user.userId, item, topic);
+    if (savedPaper && !savedPaper.alreadySaved) {
+      checkAchievement(req.user.userId, 'first_paper');
+      const paperCount = getOne("SELECT COUNT(*) as cnt FROM papers WHERE user_id = ?", [req.user.userId]);
+      if (paperCount?.cnt >= 5) checkAchievement(req.user.userId, 'paper_5');
+      recordMemoryEvent(req.user.userId, {
+        sourceType: 'news_auto_paper',
+        sourceId: String(savedPaper.id),
+        title: `新闻联动入库：${savedPaper.title || savedPaper.arxiv_id}`,
+        content: `来自新闻关注「${item.title}」。摘要：${savedPaper.abstract || '暂无'}`,
+        tags: ['新闻视野', '图书馆', topic],
+        weight: 2.2,
+        awards: { literature: 10, frontier: 6 },
+      });
+    }
+  } catch (e) {
+    paperError = e.message || '核心文献抓取失败';
+    console.error('新闻联动论文失败:', e.message);
+  }
+
+  course = await createMicroCourse(req.user.userId, topic, item, aiConfig);
+  recordMemoryEvent(req.user.userId, {
+    sourceType: 'news_micro_course',
+    sourceId: String(course.id),
+    title: `新闻联动微学习：${course.topic}`,
+    content: (course.outline.chapters || []).map((chapter, index) => `${index + 1}. ${chapter.title}`).join('\n'),
+    tags: ['新闻视野', '大师之路', topic],
+    weight: 2,
+    awards: { learning: 14, execution: 6 },
+  });
+  checkAchievement(req.user.userId, 'first_learn');
+
+  res.json({
+    success: true,
+    topic,
+    paper: savedPaper,
+    paperError,
+    course,
+    message: savedPaper
+      ? '已关注：核心文献已进入图书馆，微学习路径已生成。'
+      : '已关注：微学习路径已生成，核心文献抓取稍后可重试。',
+  });
 });
 
 // ============ 星露谷素材列表 ============

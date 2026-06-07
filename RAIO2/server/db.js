@@ -147,6 +147,32 @@ function createTables() {
       FOREIGN KEY (user_id) REFERENCES users(id)
     )
   `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS global_memories (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     INTEGER NOT NULL,
+      source_type TEXT NOT NULL,
+      source_id   TEXT DEFAULT '',
+      title       TEXT NOT NULL,
+      content     TEXT DEFAULT '',
+      tags        TEXT DEFAULT '',
+      weight      REAL DEFAULT 1,
+      created_at  TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS user_exp (
+      user_id     INTEGER NOT NULL,
+      domain      TEXT NOT NULL,
+      exp         INTEGER DEFAULT 0,
+      updated_at  TEXT DEFAULT (datetime('now', 'localtime')),
+      PRIMARY KEY (user_id, domain),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
 }
 
 function seedAchievements() {

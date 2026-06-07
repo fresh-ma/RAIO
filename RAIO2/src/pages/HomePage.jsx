@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../store/AuthContext';
-import { streamChat, getChatHistory, getTodos, addTodo, toggleTodo, deleteTodo, getAchievements } from '../api';
+import { streamChat, getChatHistory, getTodos, addTodo, toggleTodo, deleteTodo, getAchievements, getGlobalRadar } from '../api';
 
 const AGENT_DOCK = [
   { id: 'lumo', name: '洛墨', role: '总控', icon: '🌙', color: '#6ea8fe' },
@@ -18,6 +18,74 @@ function agentLabel(agentId) {
   return AGENT_MAP[agentId]?.name || agentId || '智能助手';
 }
 
+function AbilityRadar({ radar }) {
+  const domains = radar?.domains || [];
+  if (!domains.length) {
+    return <p className="text-xs text-sv-text2 font-pixel-cn">画像生成中...</p>;
+  }
+
+  const size = 220;
+  const center = size / 2;
+  const radius = 70;
+  const angleStep = (Math.PI * 2) / domains.length;
+  const pointAt = (score, index, extra = 0) => {
+    const angle = -Math.PI / 2 + index * angleStep;
+    const r = radius * (score / 100) + extra;
+    return {
+      x: center + Math.cos(angle) * r,
+      y: center + Math.sin(angle) * r,
+    };
+  };
+  const polygon = domains.map((domain, index) => {
+    const point = pointAt(domain.score, index);
+    return `${point.x},${point.y}`;
+  }).join(' ');
+
+  return (
+    <div>
+      <svg className="radar-svg" viewBox={`0 0 ${size} ${size}`} role="img" aria-label="六边形能力雷达图">
+        {[25, 50, 75, 100].map(level => (
+          <polygon
+            key={level}
+            points={domains.map((_, index) => {
+              const point = pointAt(level, index);
+              return `${point.x},${point.y}`;
+            }).join(' ')}
+            fill="none"
+            stroke="rgba(232, 220, 200, 0.18)"
+            strokeWidth="1"
+          />
+        ))}
+        {domains.map((domain, index) => {
+          const axis = pointAt(100, index);
+          const label = pointAt(100, index, 24);
+          return (
+            <g key={domain.key}>
+              <line x1={center} y1={center} x2={axis.x} y2={axis.y} stroke="rgba(232, 220, 200, 0.18)" />
+              <text x={label.x} y={label.y} textAnchor="middle" dominantBaseline="middle" className="radar-label">
+                {domain.label}
+              </text>
+            </g>
+          );
+        })}
+        <polygon points={polygon} fill="rgba(78, 205, 196, 0.28)" stroke="#4ecdc4" strokeWidth="3" />
+        {domains.map((domain, index) => {
+          const point = pointAt(domain.score, index);
+          return <circle key={domain.key} cx={point.x} cy={point.y} r="4" fill={domain.color} />;
+        })}
+      </svg>
+      <div className="grid grid-cols-2 gap-2 mt-2">
+        {domains.map(domain => (
+          <div key={domain.key} className="radar-stat">
+            <span>{domain.label}</span>
+            <strong>{domain.exp} EXP</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function HomePage() {
   const { user, token } = useAuth();
   const [messages, setMessages] = useState([]);
@@ -30,6 +98,7 @@ export default function HomePage() {
   const [todoInput, setTodoInput] = useState('');
   const [achievements, setAchievements] = useState([]);
   const [newAchievement, setNewAchievement] = useState(null);
+  const [radar, setRadar] = useState(null);
   const chatEndRef = useRef(null);
   const abortRef = useRef(null);
 
@@ -44,9 +113,10 @@ export default function HomePage() {
   async function loadInitialData() {
     if (!token) return;
     try {
-      const [t, a, h] = await Promise.all([getTodos(token), getAchievements(token), getChatHistory(token)]);
+      const [t, a, h, r] = await Promise.all([getTodos(token), getAchievements(token), getChatHistory(token), getGlobalRadar(token)]);
       setTodos(t);
       setAchievements(a);
+      setRadar(r);
       setMessages((h || []).map(msg => ({
         role: msg.role,
         content: msg.content,
@@ -63,9 +133,10 @@ export default function HomePage() {
   async function refreshSideData() {
     if (!token) return;
     try {
-      const [t, a] = await Promise.all([getTodos(token), getAchievements(token)]);
+      const [t, a, r] = await Promise.all([getTodos(token), getAchievements(token), getGlobalRadar(token)]);
       setTodos(t);
       setAchievements(a);
+      setRadar(r);
     } catch (e) {
       console.error('刷新数据失败:', e);
     }
@@ -255,7 +326,27 @@ export default function HomePage() {
       {/* 右侧面板 */}
       <div className="flex flex-col gap-4">
         {/* 待办事项 */}
-        <div className="pixel-panel flex-1" style={{ maxHeight: '35vh' }}>
+        <div className="pixel-panel">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="pixel-title text-xs">能力雷达</h3>
+            <span className="text-xs text-sv-text2 font-pixel-cn">全局EXP</span>
+          </div>
+          <AbilityRadar radar={radar} />
+          <div className="mt-3 pt-3" style={{ borderTop: '2px dashed #4a4a6a' }}>
+            <p className="text-xs text-sv-gold font-pixel-cn mb-2">最近记忆</p>
+            {(radar?.memories || []).slice(0, 3).map(memory => (
+              <div key={memory.id} className="memory-chip">
+                <span>{memory.source_type}</span>
+                <p>{memory.title}</p>
+              </div>
+            ))}
+            {!(radar?.memories || []).length && (
+              <p className="text-xs text-sv-text2 font-pixel-cn">开始阅读、收藏或学习后会自动点亮。</p>
+            )}
+          </div>
+        </div>
+
+        <div className="pixel-panel flex-1" style={{ maxHeight: '28vh' }}>
           <h3 className="pixel-title text-xs mb-3">📋 待办事项</h3>
           
           <div className="flex gap-1 mb-3">
@@ -271,7 +362,7 @@ export default function HomePage() {
             </button>
           </div>
           
-          <div className="overflow-y-auto" style={{ maxHeight: 'calc(35vh - 100px)' }}>
+          <div className="overflow-y-auto" style={{ maxHeight: 'calc(28vh - 100px)' }}>
             {todos.length === 0 ? (
               <p className="text-xs text-sv-text2 text-center py-4 font-pixel-cn">暂无待办，添加一个吧 ✨</p>
             ) : (
@@ -301,9 +392,9 @@ export default function HomePage() {
         </div>
         
         {/* 成就公告栏 */}
-        <div className="pixel-panel flex-1" style={{ maxHeight: '35vh' }}>
+        <div className="pixel-panel flex-1" style={{ maxHeight: '28vh' }}>
           <h3 className="pixel-title text-xs mb-3">🏆 成就公告栏</h3>
-          <div className="overflow-y-auto" style={{ maxHeight: 'calc(35vh - 60px)' }}>
+          <div className="overflow-y-auto" style={{ maxHeight: 'calc(28vh - 60px)' }}>
             {unlockedAchievements.length === 0 ? (
               <div className="text-center py-4">
                 <p className="text-2xl mb-2">🔒</p>

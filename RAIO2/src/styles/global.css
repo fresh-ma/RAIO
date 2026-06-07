@@ -14,6 +14,7 @@
   --sv-panel: #2a2a4a;
   --sv-border: #4a4a6a;
   --sv-text: #e8dcc8;
+  --sv-text2: #b8a888;
 }
 
 * {
@@ -410,4 +411,67 @@ body {
   padding: 12px;
   border: 2px solid var(--sv-border);
   background: rgba(0,0,0,0.2);
+}
+
+.radar-svg {
+  width: 100%;
+  max-width: 240px;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+.radar-label {
+  fill: var(--sv-cream);
+  font-size: 10px;
+  font-family: 'Zpix', monospace;
+}
+
+.radar-stat {
+  min-height: 42px;
+  padding: 6px 8px;
+  border: 1px solid var(--sv-border);
+  background: rgba(0,0,0,0.22);
+  font-size: 11px;
+  font-family: 'Zpix', monospace;
+  color: var(--sv-text2);
+}
+
+.radar-stat strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--sv-gold);
+  font-weight: 400;
+}
+
+.memory-chip {
+  padding: 7px 8px;
+  margin-bottom: 6px;
+  border: 1px solid var(--sv-border);
+  background: rgba(15, 52, 96, 0.46);
+}
+
+.memory-chip span {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--sv-teal);
+  font-size: 10px;
+}
+
+.memory-chip p {
+  margin: 0;
+  color: var(--sv-cream);
+  font-size: 11px;
+  line-height: 1.45;
+  font-family: 'Zpix', monospace;
+}
+
+.synergy-result {
+  padding: 8px 10px;
+  border: 2px solid var(--sv-teal);
+  background: rgba(78, 205, 196, 0.12);
+  color: var(--sv-cream);
+  font-size: 12px;
+  line-height: 1.55;
+  font-family: 'Zpix', monospace;
 }

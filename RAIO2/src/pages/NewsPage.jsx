@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useAuth } from '../store/AuthContext';
-import { getNews, analyzeNews } from '../api';
+import { getNews, analyzeNews, followNews } from '../api';
 
 function MarkdownBlock({ content }) {
   return (
@@ -21,6 +21,8 @@ export default function NewsPage() {
   const [analysis, setAnalysis] = useState('');
   const [question, setQuestion] = useState('');
   const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [followLoadingKey, setFollowLoadingKey] = useState('');
+  const [followResults, setFollowResults] = useState({});
 
   useEffect(() => {
     loadNews();
@@ -66,6 +68,24 @@ export default function NewsPage() {
       setAnalysis('解析失败，请稍后重试。');
     } finally {
       setAnalysisLoading(false);
+    }
+  }
+
+  function getItemKey(item) {
+    return item?.url || item?.title || '';
+  }
+
+  async function handleFollow(item) {
+    const key = getItemKey(item);
+    if (!key || followLoadingKey) return;
+    setFollowLoadingKey(key);
+    try {
+      const data = await followNews(token, item);
+      setFollowResults(prev => ({ ...prev, [key]: data }));
+    } catch (e) {
+      setFollowResults(prev => ({ ...prev, [key]: { error: e.message || '联动失败' } }));
+    } finally {
+      setFollowLoadingKey('');
     }
   }
 
@@ -119,6 +139,18 @@ export default function NewsPage() {
               )}
             </div>
 
+            {followResults[getItemKey(activeItem)] && (
+              <div className="synergy-result mb-3">
+                {followResults[getItemKey(activeItem)].error || followResults[getItemKey(activeItem)].message}
+                {followResults[getItemKey(activeItem)].paper && (
+                  <p className="mt-1">图书馆：{followResults[getItemKey(activeItem)].paper.title || followResults[getItemKey(activeItem)].paper.arxiv_id}</p>
+                )}
+                {followResults[getItemKey(activeItem)].course && (
+                  <p className="mt-1">大师之路：{followResults[getItemKey(activeItem)].course.topic}</p>
+                )}
+              </div>
+            )}
+
             <div className="flex gap-2">
               <input
                 value={question}
@@ -129,6 +161,13 @@ export default function NewsPage() {
               />
               <button onClick={askFollowup} disabled={analysisLoading} className="pixel-btn pixel-btn-gold px-3 text-xs">
                 追问
+              </button>
+              <button
+                onClick={() => handleFollow(activeItem)}
+                disabled={followLoadingKey === getItemKey(activeItem)}
+                className="pixel-btn pixel-btn-teal px-3 text-xs"
+              >
+                {followLoadingKey === getItemKey(activeItem) ? '联动中' : '关注'}
               </button>
             </div>
           </div>
@@ -162,6 +201,13 @@ export default function NewsPage() {
                     <button onClick={() => openAnalysis(item)} className="pixel-btn pixel-btn-teal px-2 py-1 text-xs">
                       AI解析
                     </button>
+                    <button
+                      onClick={() => handleFollow(item)}
+                      disabled={followLoadingKey === getItemKey(item)}
+                      className="pixel-btn pixel-btn-gold px-2 py-1 text-xs"
+                    >
+                      {followLoadingKey === getItemKey(item) ? '联动中' : '关注联动'}
+                    </button>
                     {item.url && (
                       <a href={item.url} target="_blank" rel="noopener noreferrer"
                         className="pixel-btn px-2 py-1 text-xs bg-sv-dark text-sv-cream"
@@ -170,6 +216,11 @@ export default function NewsPage() {
                       </a>
                     )}
                   </div>
+                  {followResults[getItemKey(item)] && (
+                    <div className="synergy-result mt-3">
+                      {followResults[getItemKey(item)].error || followResults[getItemKey(item)].message}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
