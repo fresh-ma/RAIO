@@ -1,0 +1,94 @@
+<svg width="960" height="500" viewBox="0 0 960 500" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">RAIO 跨模块联动工作流</title>
+  <desc id="desc">以星露谷风格展示新闻关注如何联动图书馆、学习路径、全局记忆与主页 Agent。</desc>
+  <style>
+    .bg { fill: #18243a; }
+    .field { fill: #2f7d4f; stroke: #21351f; stroke-width: 8; }
+    .field2 { fill: #3f9b63; }
+    .wood { fill: #8f5f35; stroke: #352216; stroke-width: 5; }
+    .panel { fill: #f3d69b; stroke: #352216; stroke-width: 5; }
+    .red { fill: #bd5248; stroke: #352216; stroke-width: 5; }
+    .blue { fill: #4f7fbd; stroke: #352216; stroke-width: 5; }
+    .gold { fill: #dda13a; stroke: #352216; stroke-width: 5; }
+    .green { fill: #55a46b; stroke: #352216; stroke-width: 5; }
+    .purple { fill: #7d69b5; stroke: #352216; stroke-width: 5; }
+    .ink { fill: #2f2118; font-family: "Courier New", monospace; font-weight: 700; }
+    .cream { fill: #fff0c2; font-family: "Courier New", monospace; font-weight: 700; }
+    .small { font-size: 16px; }
+    .mid { font-size: 22px; }
+    .pixel { shape-rendering: crispEdges; }
+  </style>
+
+  <rect class="bg pixel" width="960" height="500"/>
+  <rect class="field pixel" x="54" y="76" width="852" height="360"/>
+  <rect class="field2 pixel" x="78" y="100" width="804" height="312"/>
+
+  <g class="pixel">
+    <rect class="panel" x="250" y="26" width="460" height="52"/>
+    <text class="ink mid" x="480" y="60" text-anchor="middle">One Action, Three Modules</text>
+  </g>
+
+  <g class="pixel">
+    <rect class="wood" x="82" y="170" width="150" height="114"/>
+    <rect class="red" x="100" y="140" width="114" height="42"/>
+    <rect class="panel" x="106" y="200" width="102" height="42"/>
+    <text class="ink small" x="157" y="227" text-anchor="middle">News</text>
+    <text class="cream small" x="157" y="310" text-anchor="middle">Focus</text>
+  </g>
+
+  <g class="pixel">
+    <rect class="wood" x="300" y="150" width="156" height="128"/>
+    <rect class="blue" x="280" y="116" width="196" height="48"/>
+    <rect fill="#79adde" stroke="#352216" stroke-width="5" x="326" y="190" width="38" height="38"/>
+    <rect fill="#79adde" stroke="#352216" stroke-width="5" x="392" y="190" width="38" height="38"/>
+    <rect class="panel" x="318" y="244" width="120" height="34"/>
+    <text class="ink small" x="378" y="267" text-anchor="middle">Core Paper</text>
+  </g>
+
+  <g class="pixel">
+    <rect class="wood" x="518" y="150" width="156" height="128"/>
+    <rect class="gold" x="498" y="116" width="196" height="48"/>
+    <rect fill="#7d69b5" stroke="#352216" stroke-width="5" x="568" y="188" width="56" height="58"/>
+    <rect class="panel" x="530" y="244" width="132" height="34"/>
+    <text class="ink small" x="596" y="267" text-anchor="middle">Course</text>
+  </g>
+
+  <g class="pixel">
+    <rect class="wood" x="738" y="170" width="150" height="114"/>
+    <rect class="green" x="720" y="140" width="186" height="42"/>
+    <rect class="panel" x="760" y="200" width="106" height="42"/>
+    <text class="ink small" x="813" y="227" text-anchor="middle">Agent</text>
+    <text class="cream small" x="813" y="310" text-anchor="middle">Ask Again</text>
+  </g>
+
+  <g class="pixel">
+    <rect class="purple" x="356" y="368" width="248" height="64"/>
+    <rect fill="#bba0df" stroke="#352216" stroke-width="5" x="392" y="340" width="176" height="34"/>
+    <text class="cream mid" x="480" y="408" text-anchor="middle">Global Memory</text>
+  </g>
+
+  <g class="pixel" stroke="#352216" stroke-width="5" fill="none">
+    <path d="M232 222 H300"/>
+    <path d="M456 222 H518"/>
+    <path d="M674 222 H738"/>
+    <path d="M378 278 V368"/>
+    <path d="M596 278 V368"/>
+    <path d="M604 400 H888 V227"/>
+  </g>
+
+  <g class="pixel" fill="#fff0c2">
+    <rect x="259" y="215" width="14" height="14"/>
+    <rect x="480" y="215" width="14" height="14"/>
+    <rect x="699" y="215" width="14" height="14"/>
+    <rect x="371" y="316" width="14" height="14"/>
+    <rect x="589" y="316" width="14" height="14"/>
+    <rect x="881" y="220" width="14" height="14"/>
+  </g>
+
+  <g class="pixel">
+    <rect class="panel" x="106" y="350" width="168" height="34"/>
+    <text class="ink small" x="190" y="373" text-anchor="middle">follow once</text>
+    <rect class="panel" x="688" y="350" width="168" height="34"/>
+    <text class="ink small" x="772" y="373" text-anchor="middle">RAG context</text>
+  </g>
+</svg>

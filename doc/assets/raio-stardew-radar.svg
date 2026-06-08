@@ -1,0 +1,75 @@
+<svg width="960" height="460" viewBox="0 0 960 460" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">RAIO 全局记忆与能力雷达</title>
+  <desc id="desc">以星露谷风格展示行为事件进入全局记忆并转化为能力雷达经验值。</desc>
+  <style>
+    .bg { fill: #18243a; }
+    .field { fill: #2f7d4f; stroke: #21351f; stroke-width: 8; }
+    .plot { fill: #6b422c; stroke: #352216; stroke-width: 5; }
+    .panel { fill: #f3d69b; stroke: #352216; stroke-width: 5; }
+    .purple { fill: #7d69b5; stroke: #352216; stroke-width: 5; }
+    .ink { fill: #2f2118; font-family: "Courier New", monospace; font-weight: 700; }
+    .cream { fill: #fff0c2; font-family: "Courier New", monospace; font-weight: 700; }
+    .small { font-size: 16px; }
+    .mid { font-size: 22px; }
+    .pixel { shape-rendering: crispEdges; }
+  </style>
+
+  <rect class="bg pixel" width="960" height="460"/>
+  <rect class="field pixel" x="56" y="76" width="848" height="328"/>
+
+  <g class="pixel">
+    <rect class="panel" x="218" y="26" width="524" height="52"/>
+    <text class="ink mid" x="480" y="60" text-anchor="middle">Work Logs to Growth Radar</text>
+  </g>
+
+  <g class="pixel">
+    <rect class="plot" x="96" y="126" width="214" height="58"/>
+    <rect class="plot" x="96" y="206" width="214" height="58"/>
+    <rect class="plot" x="96" y="286" width="214" height="58"/>
+    <rect fill="#4ecdc4" x="120" y="146" width="18" height="18"/>
+    <rect fill="#9bd67d" x="120" y="226" width="18" height="18"/>
+    <rect fill="#e8b830" x="120" y="306" width="18" height="18"/>
+    <text class="cream small" x="162" y="162">paper notes</text>
+    <text class="cream small" x="162" y="242">learning quiz</text>
+    <text class="cream small" x="162" y="322">news todos</text>
+  </g>
+
+  <g class="pixel">
+    <rect class="purple" x="408" y="136" width="168" height="208"/>
+    <rect fill="#bba0df" stroke="#352216" stroke-width="5" x="438" y="106" width="108" height="38"/>
+    <text class="cream mid" x="492" y="218" text-anchor="middle">RAG</text>
+    <text class="cream small" x="492" y="250" text-anchor="middle">retrieve</text>
+    <text class="cream small" x="492" y="274" text-anchor="middle">inject</text>
+  </g>
+
+  <g class="pixel" stroke="#352216" stroke-width="5" fill="none">
+    <path d="M310 155 H408"/>
+    <path d="M310 235 H408"/>
+    <path d="M310 315 H408"/>
+    <path d="M576 232 H643"/>
+  </g>
+  <g class="pixel" fill="#fff0c2">
+    <rect x="401" y="148" width="14" height="14"/>
+    <rect x="401" y="228" width="14" height="14"/>
+    <rect x="401" y="308" width="14" height="14"/>
+    <rect x="636" y="225" width="14" height="14"/>
+  </g>
+
+  <g transform="translate(740 232)">
+    <polygon points="0,-112 97,-56 97,56 0,112 -97,56 -97,-56" fill="#24344d" stroke="#352216" stroke-width="5"/>
+    <polygon points="0,-80 70,-36 66,46 0,86 -72,42 -62,-40" fill="#6ea8fe" opacity="0.42"/>
+    <polygon points="0,-98 85,-49 85,49 0,98 -85,49 -85,-49" fill="none" stroke="#fff0c2" stroke-width="3"/>
+    <polygon points="0,-60 52,-30 52,30 0,60 -52,30 -52,-30" fill="none" stroke="#fff0c2" stroke-width="2" opacity="0.55"/>
+    <circle cx="0" cy="-80" r="6" fill="#4ecdc4"/>
+    <circle cx="70" cy="-36" r="6" fill="#9bd67d"/>
+    <circle cx="66" cy="46" r="6" fill="#e8b830"/>
+    <circle cx="0" cy="86" r="6" fill="#c4a7e7"/>
+    <circle cx="-72" cy="42" r="6" fill="#6ea8fe"/>
+    <circle cx="-62" cy="-40" r="6" fill="#f6c177"/>
+  </g>
+
+  <g class="pixel">
+    <rect class="panel" x="662" y="374" width="156" height="34"/>
+    <text class="ink small" x="740" y="397" text-anchor="middle">EXP 0-100</text>
+  </g>
+</svg>
