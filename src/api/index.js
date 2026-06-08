@@ -25,15 +25,19 @@ function getAIHeaders(token) {
   };
 }
 
+async function readJson(res, fallbackMessage = '请求失败') {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || fallbackMessage);
+  return data;
+}
+
 export async function register(username, password) {
   const res = await fetch(`${API_BASE}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password, confirm_password: password }),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || '注册失败');
-  return data;
+  return readJson(res, '注册失败');
 }
 
 export async function login(username, password) {
@@ -42,16 +46,12 @@ export async function login(username, password) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || '登录失败');
-  return data;
+  return readJson(res, '登录失败');
 }
 
 export async function getProfile(token) {
   const res = await fetch(`${API_BASE}/user/profile`, { headers: getHeaders(token) });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error);
-  return data;
+  return readJson(res, '获取用户信息失败');
 }
 
 export async function updateProfile(token, updates) {
@@ -60,12 +60,12 @@ export async function updateProfile(token, updates) {
     headers: getHeaders(token),
     body: JSON.stringify(updates),
   });
-  return res.json();
+  return readJson(res, '更新用户信息失败');
 }
 
 export async function getTodos(token) {
   const res = await fetch(`${API_BASE}/todos`, { headers: getHeaders(token) });
-  return res.json();
+  return readJson(res, '获取待办失败');
 }
 
 export async function addTodo(token, content) {
@@ -74,7 +74,7 @@ export async function addTodo(token, content) {
     headers: getHeaders(token),
     body: JSON.stringify({ content }),
   });
-  return res.json();
+  return readJson(res, '添加待办失败');
 }
 
 export async function toggleTodo(token, id, done) {
@@ -83,7 +83,7 @@ export async function toggleTodo(token, id, done) {
     headers: getHeaders(token),
     body: JSON.stringify({ done }),
   });
-  return res.json();
+  return readJson(res, '更新待办失败');
 }
 
 export async function deleteTodo(token, id) {
@@ -91,32 +91,32 @@ export async function deleteTodo(token, id) {
     method: 'DELETE',
     headers: getHeaders(token),
   });
-  return res.json();
+  return readJson(res, '删除待办失败');
 }
 
 export async function getAchievements(token) {
   const res = await fetch(`${API_BASE}/achievements`, { headers: getHeaders(token) });
-  return res.json();
+  return readJson(res, '获取成就失败');
 }
 
 export async function getGlobalRadar(token) {
   const res = await fetch(`${API_BASE}/global/radar`, { headers: getHeaders(token) });
-  return res.json();
+  return readJson(res, '获取全局画像失败');
 }
 
 export async function getChatHistory(token) {
   const res = await fetch(`${API_BASE}/chat/history`, { headers: getHeaders(token) });
-  return res.json();
+  return readJson(res, '获取聊天历史失败');
 }
 
 export async function searchPapers(token, q) {
   const res = await fetch(`${API_BASE}/papers/search?q=${encodeURIComponent(q)}`, { headers: getHeaders(token) });
-  return res.json();
+  return readJson(res, '论文搜索失败');
 }
 
 export async function getSavedPapers(token) {
   const res = await fetch(`${API_BASE}/papers/saved`, { headers: getHeaders(token) });
-  return res.json();
+  return readJson(res, '获取收藏论文失败');
 }
 
 export async function savePaper(token, paper) {
@@ -125,7 +125,7 @@ export async function savePaper(token, paper) {
     headers: getHeaders(token),
     body: JSON.stringify(paper),
   });
-  return res.json();
+  return readJson(res, '收藏论文失败');
 }
 
 export async function removePaper(token, id) {
@@ -133,12 +133,12 @@ export async function removePaper(token, id) {
     method: 'DELETE',
     headers: getHeaders(token),
   });
-  return res.json();
+  return readJson(res, '移除论文失败');
 }
 
 export async function getNote(token, paperId) {
   const res = await fetch(`${API_BASE}/notes/${paperId}`, { headers: getHeaders(token) });
-  return res.json();
+  return readJson(res, '获取笔记失败');
 }
 
 export async function saveNote(token, paperId, content) {
@@ -147,7 +147,7 @@ export async function saveNote(token, paperId, content) {
     headers: getHeaders(token),
     body: JSON.stringify({ content }),
   });
-  return res.json();
+  return readJson(res, '保存笔记失败');
 }
 
 export async function summarizePaper(token, paperId) {
@@ -155,14 +155,12 @@ export async function summarizePaper(token, paperId) {
     method: 'POST',
     headers: getAIHeaders(token),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || '论文总结失败');
-  return data;
+  return readJson(res, '论文总结失败');
 }
 
 export async function getCourses(token) {
   const res = await fetch(`${API_BASE}/learn/courses`, { headers: getHeaders(token) });
-  return res.json();
+  return readJson(res, '获取学习路径失败');
 }
 
 export async function generateCourse(token, topic) {
@@ -171,7 +169,7 @@ export async function generateCourse(token, topic) {
     headers: getAIHeaders(token),
     body: JSON.stringify({ topic }),
   });
-  return res.json();
+  return readJson(res, '生成学习路径失败');
 }
 
 export async function generateQuiz(token, data) {
@@ -180,7 +178,7 @@ export async function generateQuiz(token, data) {
     headers: getAIHeaders(token),
     body: JSON.stringify(data),
   });
-  return res.json();
+  return readJson(res, '生成测验失败');
 }
 
 export async function updateProgress(token, data) {
@@ -189,12 +187,12 @@ export async function updateProgress(token, data) {
     headers: getHeaders(token),
     body: JSON.stringify(data),
   });
-  return res.json();
+  return readJson(res, '更新学习进度失败');
 }
 
 export async function getNews(token) {
   const res = await fetch(`${API_BASE}/news`, { headers: getHeaders(token) });
-  return res.json();
+  return readJson(res, '获取新闻失败');
 }
 
 export async function analyzeNews(token, item, question) {
@@ -203,7 +201,7 @@ export async function analyzeNews(token, item, question) {
     headers: getAIHeaders(token),
     body: JSON.stringify({ item, question }),
   });
-  return res.json();
+  return readJson(res, '新闻解析失败');
 }
 
 export async function followNews(token, item) {
@@ -212,9 +210,7 @@ export async function followNews(token, item) {
     headers: getAIHeaders(token),
     body: JSON.stringify({ item }),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || '联动失败');
-  return data;
+  return readJson(res, '联动失败');
 }
 
 // SSE 流式聊天

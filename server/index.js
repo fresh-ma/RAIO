@@ -759,11 +759,18 @@ answer是正确答案的索引(0-3)。`;
 
 app.post('/api/learn/progress', authMiddleware, (req, res) => {
   const { courseId, chapterIdx, status, score } = req.body;
+  const course = getOne(
+    "SELECT id, topic, outline FROM learn_courses WHERE id = ? AND user_id = ?",
+    [courseId, req.user.userId]
+  );
+  if (!course) return res.status(404).json({ error: '学习路径不存在' });
   
   const existing = getOne(
-    "SELECT id FROM learn_progress WHERE course_id = ? AND chapter_idx = ?",
+    "SELECT id, status FROM learn_progress WHERE course_id = ? AND chapter_idx = ?",
     [courseId, chapterIdx]
   );
+  const statusChanged = !existing || existing.status !== status;
+  const firstPassed = status === 'passed' && existing?.status !== 'passed';
   
   if (existing) {
     run("UPDATE learn_progress SET status = ?, score = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
@@ -773,13 +780,9 @@ app.post('/api/learn/progress', authMiddleware, (req, res) => {
       [courseId, chapterIdx, status, score || 0]);
   }
   
-  if (status === 'passed') {
+  if (firstPassed) {
     checkAchievement(req.user.userId, 'first_quiz');
   }
-  const course = getOne(
-    "SELECT topic, outline FROM learn_courses WHERE id = ? AND user_id = ?",
-    [courseId, req.user.userId]
-  );
   let chapterTitle = `第${Number(chapterIdx) + 1}章`;
   try {
     const outline = JSON.parse(course?.outline || '{}');
@@ -789,15 +792,16 @@ app.post('/api/learn/progress', authMiddleware, (req, res) => {
   }
   recordMemoryEvent(req.user.userId, {
     sourceType: 'learn_progress',
-    sourceId: `${courseId}:${chapterIdx}`,
+    sourceId: `${courseId}:${chapterIdx}:${status}`,
     title: `学习进度：${course?.topic || '学习路径'} / ${chapterTitle}`,
     content: `状态：${status}，得分：${score || 0}`,
     tags: ['大师之路', status],
     weight: status === 'passed' ? 2 : 1.2,
-    awards: {
-      learning: status === 'passed' ? 12 : 5,
-      execution: status === 'passed' ? 8 : 4,
-    },
+    dedupe: true,
+    awards: statusChanged ? {
+      learning: firstPassed ? 12 : 5,
+      execution: firstPassed ? 8 : 4,
+    } : undefined,
   });
   
   res.json({ success: true });
@@ -932,17 +936,24 @@ app.post('/api/news/follow', authMiddleware, async (req, res) => {
 
   const aiConfig = getAIRequestConfig(req);
   const topic = inferNewsTopic(item);
+  const newsKey = item.url || item.title;
+  const existingCourseMemory = getOne(
+    "SELECT source_id FROM global_memories WHERE user_id = ? AND source_type = 'news_micro_course' AND source_id = ?",
+    [req.user.userId, newsKey]
+  );
   let savedPaper = null;
   let course = null;
   let paperError = '';
+  let courseError = '';
 
-  recordMemoryEvent(req.user.userId, {
+  const isNewFocus = recordMemoryEvent(req.user.userId, {
     sourceType: 'news_focus',
-    sourceId: item.url || item.title,
+    sourceId: newsKey,
     title: `关注前沿：${item.title}`,
     content: `${item.description || ''}\n来源：${item.source || ''}\n链接：${item.url || ''}`,
     tags: ['新闻视野', topic],
     weight: 2.4,
+    dedupe: true,
     awards: { frontier: 18, synthesis: 8, execution: 4 },
   });
 
@@ -967,27 +978,41 @@ app.post('/api/news/follow', authMiddleware, async (req, res) => {
     console.error('新闻联动论文失败:', e.message);
   }
 
-  course = await createMicroCourse(req.user.userId, topic, item, aiConfig);
-  recordMemoryEvent(req.user.userId, {
-    sourceType: 'news_micro_course',
-    sourceId: String(course.id),
-    title: `新闻联动微学习：${course.topic}`,
-    content: (course.outline.chapters || []).map((chapter, index) => `${index + 1}. ${chapter.title}`).join('\n'),
-    tags: ['新闻视野', '大师之路', topic],
-    weight: 2,
-    awards: { learning: 14, execution: 6 },
-  });
-  checkAchievement(req.user.userId, 'first_learn');
+  if (!existingCourseMemory) {
+    try {
+      course = await createMicroCourse(req.user.userId, topic, item, aiConfig);
+      recordMemoryEvent(req.user.userId, {
+        sourceType: 'news_micro_course',
+        sourceId: newsKey,
+        title: `新闻联动微学习：${course.topic}`,
+        content: (course.outline.chapters || []).map((chapter, index) => `${index + 1}. ${chapter.title}`).join('\n'),
+        tags: ['新闻视野', '大师之路', topic, `course:${course.id}`],
+        weight: 2,
+        dedupe: true,
+        awards: { learning: 14, execution: 6 },
+      });
+      checkAchievement(req.user.userId, 'first_learn');
+    } catch (e) {
+      courseError = e.message || '微学习路径生成失败';
+      console.error('新闻联动课程失败:', e.message);
+    }
+  }
+
+  const message = course
+    ? (savedPaper ? '已关注：核心文献已进入图书馆，微学习路径已生成。' : '已关注：微学习路径已生成，核心文献抓取稍后可重试。')
+    : courseError
+      ? (savedPaper ? '已关注：核心文献已进入图书馆，微学习路径生成失败，可稍后重试。' : '已记录关注：微学习路径生成失败，核心文献抓取也可稍后重试。')
+      : (savedPaper ? '已关注过：核心文献已在图书馆，微学习路径不重复生成。' : '已关注过：微学习路径不重复生成，核心文献稍后可重试。');
 
   res.json({
     success: true,
+    duplicated: !isNewFocus,
     topic,
     paper: savedPaper,
     paperError,
+    courseError,
     course,
-    message: savedPaper
-      ? '已关注：核心文献已进入图书馆，微学习路径已生成。'
-      : '已关注：微学习路径已生成，核心文献抓取稍后可重试。',
+    message,
   });
 });
 

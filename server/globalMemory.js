@@ -58,6 +58,16 @@ export function awardExpBatch(userId, awards = {}) {
 }
 
 export function recordMemoryEvent(userId, event) {
+  const sourceType = event.sourceType || 'activity';
+  const sourceId = String(event.sourceId || '');
+  if (event.dedupe && sourceId) {
+    const existing = getOne(
+      'SELECT id FROM global_memories WHERE user_id = ? AND source_type = ? AND source_id = ?',
+      [userId, sourceType, sourceId]
+    );
+    if (existing) return false;
+  }
+
   const title = trimText(event.title || '未命名记忆', 180);
   const content = trimText(event.content || '', 1400);
   const tags = normalizeTags(event.tags);
@@ -67,8 +77,8 @@ export function recordMemoryEvent(userId, event) {
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [
       userId,
-      event.sourceType || 'activity',
-      String(event.sourceId || ''),
+      sourceType,
+      sourceId,
       title,
       content,
       tags,
@@ -78,6 +88,7 @@ export function recordMemoryEvent(userId, event) {
 
   if (event.awards) awardExpBatch(userId, event.awards);
   saveDB();
+  return true;
 }
 
 function tokenize(text = '') {

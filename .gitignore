@@ -2,6 +2,12 @@ node_modules/
 dist/
 public/assets/stardew/
 local-data/
+data/*.db
+data/*.db-*
+data/*.sqlite
+data/*.sqlite-*
+raio2.log
+raio2.pid
 .DS_Store
 *.local
 .env

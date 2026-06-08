@@ -88,7 +88,7 @@ function AbilityRadar({ radar }) {
 }
 
 export default function HomePage() {
-  const { user, token } = useAuth();
+  const { user, token, maasModel } = useAuth();
   const {
     messages,
     setMessages,
@@ -434,12 +434,7 @@ export default function HomePage() {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           {AGENT_DOCK.map(agent => {
             const isActive = currentAgent === agent.id;
-            const agentModel = agent.id === 'lumo' ? 'deepseek-v4-flash' :
-                               agent.id === 'hoot' ? 'deepseek-v3.2' :
-                               agent.id === 'bookworm' ? 'deepseek-v4-pro' :
-                               agent.id === 'scholar' ? 'qwen3-30b-a3b' :
-                               agent.id === 'bloom' ? 'kimi-k2.6' :
-                               agent.id === 'gears' ? 'qwen3-235b-a22b' : '未知模型';
+            const agentModel = isActive && currentModel ? currentModel : maasModel;
 
             const agentDesc = agent.id === 'lumo' ? '中央沉稳调度精灵' :
                               agent.id === 'hoot' ? '中央活泼调度精灵' :
