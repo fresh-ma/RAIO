@@ -188,7 +188,7 @@ export default function LearnPage() {
       )}
 
       {nodePanel && (
-        <div className="fixed inset-0 bg-black/50 z-40 flex justify-end" onClick={() => setNodePanel(null)}>
+        <div className="fixed inset-0 bg-black/50 z-50 flex justify-end" onClick={() => setNodePanel(null)}>
           <div className="skill-drawer w-full max-w-xl h-full overflow-y-auto p-5" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3 mb-4">
               <div>
@@ -299,7 +299,7 @@ export default function LearnPage() {
                     return (
                       <div
                         key={i}
-                        className="skill-node p-2 bg-black/20 rounded border border-sv-border"
+                        className="skill-node p-3 bg-black/20 rounded border border-sv-border transition-all"
                         onClick={(e) => {
                           e.stopPropagation();
                           setNodePanel({ course, chapter: ch, chapterIdx: i, status });
@@ -309,9 +309,9 @@ export default function LearnPage() {
                           <div className="flex items-center gap-2">
                             <span>{statusIcon}</span>
                             <div>
-                              <p className="text-xs text-sv-cream font-pixel-cn">{ch.title}</p>
-                              <p className="text-xs text-sv-text2">
-                                {'⭐'.repeat(ch.difficulty || 1)} · {ch.duration || '--'}
+                              <p className="text-xs text-sv-cream font-pixel-cn font-bold">{ch.title}</p>
+                              <p className="text-xs text-sv-text2 mt-1">
+                                {'⭐'.repeat(ch.difficulty || 1)} · {ch.duration || '--'} · <span className="text-sv-gold">📖 点击查看详情</span>
                               </p>
                             </div>
                           </div>

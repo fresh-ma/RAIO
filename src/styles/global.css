@@ -475,3 +475,60 @@ body {
   line-height: 1.55;
   font-family: 'Zpix', monospace;
 }
+
+/* Markdown lists & formatting fixes */
+.markdown-preview ul {
+  list-style-type: disc !important;
+  padding-left: 24px !important;
+}
+
+.markdown-preview ol {
+  list-style-type: decimal !important;
+  padding-left: 24px !important;
+}
+
+.markdown-preview strong,
+.markdown-preview b {
+  font-weight: bold !important;
+}
+
+/* Markdown tables */
+.markdown-preview table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+  border: 2px solid var(--sv-border);
+}
+
+.markdown-preview th,
+.markdown-preview td {
+  border: 1.5px solid var(--sv-border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.markdown-preview th {
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--sv-gold);
+}
+
+/* Slide-in animation for skill drawer */
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.skill-drawer {
+  animation: slideInRight 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Node card hover scale */
+.skill-node {
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.skill-node:hover {
+  transform: translateY(-2px);
+  border-color: var(--sv-gold) !important;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}

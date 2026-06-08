@@ -3,6 +3,31 @@ import ReactMarkdown from 'react-markdown';
 import { useAuth } from '../store/AuthContext';
 import { getNews, analyzeNews, followNews } from '../api';
 
+const LOCAL_FALLBACK_NEWS = [
+  {
+    title: 'arXiv cs.AI 暂时无法连接，已启用离线资讯占位',
+    description: '网络或上游 RSS 不稳定时，RAIO 会保持新闻页可见。稍后刷新即可重新拉取最新学术动态。',
+    url: 'https://arxiv.org/list/cs.AI/recent',
+    publishedAt: new Date().toISOString(),
+    source: 'RAIO fallback',
+  },
+  {
+    title: '建议关注：多智能体、检索增强生成、科研工作流自动化',
+    description: '这些方向与 RAIO 当前的 Agent 路由、论文伴读和学习路径功能高度相关，可作为近期阅读关键词。',
+    url: 'https://arxiv.org/search/cs?query=multi-agent+retrieval+augmented+generation+research+workflow&searchtype=all',
+    publishedAt: new Date().toISOString(),
+    source: 'RAIO fallback',
+  },
+];
+
+const LOCAL_FALLBACK_DIGEST = {
+  date: new Date().toLocaleDateString('zh-CN'),
+  bullets: [
+    { title: '#1 离线资讯占位', detail: 'arXiv cs.AI 暂时无法连接，RAIO 已启用离线资讯。' },
+    { title: '#2 推荐科研方向', detail: '建议关注：多智能体、检索增强生成、科研工作流自动化。' }
+  ]
+};
+
 function MarkdownBlock({ content }) {
   return (
     <div className="markdown-preview font-pixel-cn">
@@ -33,11 +58,20 @@ export default function NewsPage() {
     setLoading(true);
     try {
       const data = await getNews(token);
-      setNews(data.news || []);
-      setDigest(data.digest || null);
-      setFallback(Boolean(data.fallback));
+      if (data.news && data.news.length > 0) {
+        setNews(data.news);
+        setDigest(data.digest || null);
+        setFallback(Boolean(data.fallback));
+      } else {
+        setNews(LOCAL_FALLBACK_NEWS);
+        setDigest(LOCAL_FALLBACK_DIGEST);
+        setFallback(true);
+      }
     } catch (e) {
       console.error('加载新闻失败:', e);
+      setNews(LOCAL_FALLBACK_NEWS);
+      setDigest(LOCAL_FALLBACK_DIGEST);
+      setFallback(true);
     } finally {
       setLoading(false);
     }

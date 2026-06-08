@@ -307,6 +307,10 @@ export default function LibraryPage() {
               <button onClick={saveNoteContent} disabled={noteSaving} className="pixel-btn pixel-btn-gold px-3 py-1 text-xs">
                 {noteSaving ? '保存中' : '保存'}
               </button>
+              <button onClick={() => setNotePaper(null)} className="pixel-btn bg-sv-dark text-sv-cream px-3 py-1 text-xs"
+                style={{ border: '3px solid #4a4a6a' }}>
+                关闭
+              </button>
             </div>
           </div>
         </div>
@@ -372,7 +376,7 @@ export default function LibraryPage() {
                       📝 笔记
                     </button>
                     <button onClick={() => handleSummarize(paper)} disabled={summaryLoadingId === paper.id} className="pixel-btn pixel-btn-teal px-2 py-1 text-xs">
-                      {summaryLoadingId === paper.id ? '...' : 'AI'}
+                      {summaryLoadingId === paper.id ? '...' : 'AI 总结'}
                     </button>
                     <button onClick={() => exportPaperMarkdown(paper)} className="pixel-btn px-2 py-1 text-xs bg-sv-dark text-sv-cream"
                       style={{ border: '3px solid #4a4a6a' }}>

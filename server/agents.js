@@ -177,7 +177,7 @@ function buildMessages(agentKey, userMessage, history = [], context = {}) {
 export async function streamChat(userMessage, history = [], context = {}) {
   const agentKey = resolveAgent(context.agent, userMessage);
   const runtime = getAgentRuntime(agentKey, context.apiKey);
-  const model = context.model;
+  const model = (runtime.model && isValidMaasModel(runtime.model)) ? runtime.model : context.model;
   const messages = buildMessages(agentKey, userMessage, history, context);
 
   if (!runtime.apiKey) {
@@ -208,7 +208,7 @@ export async function streamChat(userMessage, history = [], context = {}) {
 export async function chatComplete(userMessage, history = [], context = {}) {
   const agentKey = resolveAgent(context.agent || 'scholar', userMessage);
   const runtime = getAgentRuntime(agentKey, context.apiKey);
-  const model = context.model;
+  const model = (runtime.model && isValidMaasModel(runtime.model)) ? runtime.model : context.model;
   const messages = buildMessages(agentKey, userMessage, history, context);
 
   if (!runtime.apiKey) {
