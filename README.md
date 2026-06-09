@@ -1,4 +1,6 @@
-# RAIO — 科研助手平台
+# RAIO — Research All In One
+
+![RAIO](doc/assets/raio.png)
 
 > 一个为学术工作者设计的 AI 驱动全流程科研伴侣，集论文管理、学习规划、前沿资讯、多 Agent 对话于一体。
 
