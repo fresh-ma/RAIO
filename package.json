@@ -6,21 +6,24 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --test",
+    "eval:evidence": "node eval/run-evidence-eval.js",
     "preview": "vite preview",
     "server": "node server/index.js",
     "start": "concurrently \"npm run server\" \"npm run dev\""
   },
   "dependencies": {
-    "sql.js": "^1.11.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
+    "pdf-parse": "^2.4.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
     "react-router-dom": "^6.28.0",
-    "react-markdown": "^9.0.1"
+    "sql.js": "^1.11.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

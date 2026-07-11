@@ -1,0 +1,32 @@
+{
+  "name": "minimal-evidence-verification-sample",
+  "pages": [
+    {
+      "page": 1,
+      "title": "Method",
+      "content": "RAIO retrieves a paper and records every acquisition step for later auditing."
+    },
+    {
+      "page": 2,
+      "title": "Limitations",
+      "content": "The current evaluation contains only a small demonstration set and requires expansion."
+    }
+  ],
+  "claims": [
+    {
+      "claim": "The acquisition process is auditable.",
+      "page": 1,
+      "snippet": "records every acquisition step for later auditing",
+      "evidence_type": "method",
+      "expected_verified": true
+    },
+    {
+      "claim": "The evaluation is already large-scale.",
+      "page": 2,
+      "snippet": "The evaluation is already large-scale",
+      "evidence_type": "result",
+      "expected_verified": false
+    }
+  ]
+}
+

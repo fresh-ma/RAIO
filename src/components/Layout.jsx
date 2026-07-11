@@ -6,8 +6,7 @@ const NAV_ITEMS = [
   { path: '/', label: '🏠 主页', icon: '🏠' },
   { path: '/library', label: '📚 图书馆', icon: '📚' },
   { path: '/learn', label: '🎓 大师之路', icon: '🎓' },
-  { path: '/news', label: '📰 八卦早知道', icon: '📰' },
-  { path: '/life', label: '🌻 活着', icon: '🌻' },
+  { path: '/news', label: '📰 前沿视野', icon: '📰' },
 ];
 
 export default function Layout({ children }) {
@@ -23,7 +22,7 @@ export default function Layout({ children }) {
         <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between">
           {/* Logo */}
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/')}>
-            <span className="text-2xl">🚜</span>
+            <span className="text-2xl">🔬</span>
             <h1 className="pixel-title text-sm md:text-base">RAIO</h1>
             <span className="text-sv-text2 text-xs hidden md:inline">Research All In One</span>
           </div>
@@ -105,7 +104,7 @@ export default function Layout({ children }) {
       
       {/* 底部 */}
       <footer className="bg-sv-bg2 border-t-3 border-sv-border py-3 text-center" style={{ borderTop: '3px solid #4a4a6a' }}>
-        <p className="text-xs text-sv-text2 font-pixel">RAIO © 2026 · 用星露谷的方式做科研 🚜</p>
+        <p className="text-xs text-sv-text2 font-pixel">RAIO © 2026 · 本地科研 Agent 工作台</p>
       </footer>
     </div>
   );

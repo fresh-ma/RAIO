@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import fsSync from 'fs';
+import crypto from 'crypto';
+import { lookup } from 'dns/promises';
+import { isIP } from 'net';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import { initDB, getDB, query, run, getOne, saveDB, checkAchievement } from './db.js';
@@ -15,9 +18,18 @@ import {
   recordDailyNewsRead,
   recordMemoryEvent,
 } from './globalMemory.js';
+import {
+  buildEvidenceContext,
+  extractJsonObject,
+  parsePdfFile,
+  validateEvidenceClaims,
+} from './pdfParser.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+const MAX_FULLTEXT_BYTES = 80 * 1024 * 1024;
+const INSTITUTIONAL_FETCH_INTERVAL_MS = 30 * 1000;
+const institutionalFetchClock = new Map();
 
 app.use(cors());
 app.use(express.json());
@@ -40,9 +52,9 @@ function getAIRequestConfig(req) {
   return { apiKey, model };
 }
 
-// 静态资源：星露谷素材
-const stardewPath = path.join(__dirname, '..', 'Stardew valley');
-app.use('/assets/stardew', express.static(stardewPath));
+// 兼容旧版静态素材路径
+const legacyAssetsPath = path.join(__dirname, '..', 'Stardew valley');
+app.use('/assets/stardew', express.static(legacyAssetsPath));
 
 // 生产模式：serve 前端 build
 app.use('/assets', express.static(path.join(__dirname, '..', 'public', 'assets')));
@@ -139,7 +151,70 @@ app.put('/api/user/profile', authMiddleware, (req, res) => {
   res.json({ success: true });
 });
 
-// ============ 聊天路由（SSE 流式） ============
+// ============ 聊天路由（SSE 流式 + 可执行论文工具） ============
+
+function detectPaperToolIntent(message = '') {
+  const text = String(message).toLowerCase();
+  if (/完整证据链|全流程|全文.*(?:解析|证据)|获取.*解析.*证据/.test(text)) return 'paper_pipeline';
+  if (/证据链|证据总结|核验证据|全文总结/.test(text)) return 'evidence_summary';
+  if (/解析\s*(?:pdf|论文|全文)|pdf\s*解析|提取章节/.test(text)) return 'parse_pdf';
+  if (/获取全文|下载全文|获取\s*pdf|下载\s*pdf/.test(text)) return 'fetch_fulltext';
+  return '';
+}
+
+function resolvePaperForTool(userId, message = '') {
+  const explicitId = String(message).match(/(?:paper\s*[:#]|论文\s*[#：:]?)\s*(\d+)/i)?.[1];
+  if (explicitId) {
+    return getOne('SELECT * FROM papers WHERE id = ? AND user_id = ?', [explicitId, userId]);
+  }
+
+  const doi = String(message).match(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i)?.[0];
+  if (doi) {
+    const paper = getOne('SELECT * FROM papers WHERE user_id = ? AND lower(doi) = lower(?)', [userId, doi]);
+    if (paper) return paper;
+  }
+
+  const arxivId = String(message).match(/\b(?:arxiv[:\s]*)?(\d{4}\.\d{4,5}(?:v\d+)?)\b/i)?.[1];
+  if (arxivId) {
+    const paper = getOne('SELECT * FROM papers WHERE user_id = ? AND arxiv_id = ?', [userId, arxivId]);
+    if (paper) return paper;
+  }
+
+  return getOne('SELECT * FROM papers WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
+}
+
+function paperToolAgent(tool) {
+  if (tool === 'fetch_fulltext') return 'bookworm';
+  if (tool === 'parse_pdf') return 'gears';
+  if (tool === 'evidence_summary') return 'bloom';
+  return 'lumo';
+}
+
+async function executePaperTool(tool, paper, userId, aiConfig) {
+  if (!paper) throw new Error('没有找到可操作的收藏论文，请先在图书馆收藏论文，或在指令中写明“论文 #ID”');
+  if (tool === 'fetch_fulltext') return fetchPaperFulltext(paper.id, userId);
+  if (tool === 'parse_pdf') return parsePaperPdf(paper.id, userId);
+  if (tool === 'evidence_summary') return generatePaperEvidence(paper.id, userId, aiConfig);
+  if (tool === 'paper_pipeline') {
+    const fetchResult = await fetchPaperFulltext(paper.id, userId);
+    const parseResult = await parsePaperPdf(paper.id, userId);
+    const evidenceResult = await generatePaperEvidence(paper.id, userId, aiConfig);
+    return { fetchResult, parseResult, evidenceResult };
+  }
+  throw new Error('不支持的论文工具');
+}
+
+function formatPaperToolResult(tool, paper, result) {
+  const title = paper?.title || paper?.arxiv_id || `论文 #${paper?.id}`;
+  if (tool === 'fetch_fulltext') {
+    return `## 全文获取完成\n\n- 论文：${title}\n- 来源：${result.pdf_source || '本地已有文件'}\n- 状态：已保存并通过 PDF 文件头校验\n\n现在可以继续输入“解析论文 #${paper.id}”。`;
+  }
+  if (tool === 'parse_pdf') {
+    return `## PDF 解析完成\n\n- 论文：${title}\n- 页数：${result.page_count}\n- 已解析页面：${result.parsed_pages}\n- 提取字符：${result.char_count}\n\n现在可以继续输入“生成论文 #${paper.id} 的证据链”。`;
+  }
+  const evidenceResult = tool === 'paper_pipeline' ? result.evidenceResult : result;
+  return `## 证据链任务完成\n\n- 论文：${title}\n- 覆盖页面：${evidenceResult.coverage_pages}/${evidenceResult.total_pages}\n- 证据条目：${evidenceResult.evidence.length}\n- 自动精确核验：${evidenceResult.verified_count}/${evidenceResult.evidence.length}\n\n${evidenceResult.summary || '已生成证据条目，请在图书馆查看并回跳原文。'}\n\n未通过精确匹配的证据已标记为“需人工核验”，不会冒充可靠引用。`;
+}
 
 app.post('/api/chat/stream', authMiddleware, async (req, res) => {
   try {
@@ -173,6 +248,42 @@ app.post('/api/chat/stream', authMiddleware, async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
+
+    const toolIntent = detectPaperToolIntent(message);
+    if (toolIntent) {
+      const paper = resolvePaperForTool(userId, message);
+      const agentKey = paperToolAgent(toolIntent);
+      const startedAt = Date.now();
+      const runId = startAgentRun(userId, paper?.id, toolIntent, message);
+      res.write(`data: ${JSON.stringify({ type: 'agent', agent: agentKey, name: AGENTS[agentKey]?.name || agentKey, model: aiConfig.model, tool: toolIntent })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'content', content: `正在执行：识别论文 → 调用工具 → 校验结果。\n\n` })}\n\n`);
+
+      let fullContent = '';
+      try {
+        const result = await executePaperTool(toolIntent, paper, userId, aiConfig);
+        fullContent = formatPaperToolResult(toolIntent, paper, result);
+        finishAgentRun(runId, 'success', JSON.stringify(result), '', startedAt);
+      } catch (e) {
+        fullContent = `## 任务执行失败\n\n${e.message}\n\n系统已记录失败原因，没有把未完成的步骤标记为成功。`;
+        finishAgentRun(runId, 'failed', '', e.message, startedAt);
+      }
+
+      res.write(`data: ${JSON.stringify({ type: 'content', content: fullContent })}\n\n`);
+      run("INSERT INTO chat_history (user_id, role, content, agent) VALUES (?, ?, ?, ?)",
+        [userId, 'assistant', fullContent, agentKey]);
+      recordMemoryEvent(userId, {
+        sourceType: 'agent_tool_run',
+        sourceId: String(runId || ''),
+        title: `Agent 工具任务：${toolIntent}`,
+        content: fullContent,
+        tags: ['Agent', '工具调用', toolIntent],
+        weight: 2.4,
+        awards: { execution: 10, literature: 6 },
+      });
+      saveDB();
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    }
     
     const context = {
       agent: requestedAgent || undefined,
@@ -371,6 +482,175 @@ function extractArxivId(url = '') {
   return match?.[1]?.replace(/\.pdf$/i, '') || '';
 }
 
+function normalizeDoi(value = '') {
+  const raw = String(value || '').trim();
+  const match = raw.match(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i);
+  return match ? match[0].replace(/[)\].,;]+$/g, '') : '';
+}
+
+function sanitizeIdentifier(value = 'paper') {
+  return String(value || 'paper')
+    .replace(/^https?:\/\//i, '')
+    .replace(/[\/\\:*?"<>|\s]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 120) || 'paper';
+}
+
+function isArxivIdentifier(value = '') {
+  const id = String(value || '').trim();
+  return /^\d{4}\.\d{4,5}(v\d+)?$/i.test(id) || /^[a-z.-]+\/\d{7}(v\d+)?$/i.test(id);
+}
+
+function stableUrlId(url = '') {
+  return crypto.createHash('sha1').update(String(url)).digest('hex').slice(0, 16);
+}
+
+function decodeHtmlAttr(value = '') {
+  return String(value)
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
+function resolveMaybeRelativeUrl(candidate, baseUrl) {
+  try {
+    return new URL(decodeHtmlAttr(candidate), baseUrl).toString();
+  } catch {
+    return '';
+  }
+}
+
+function extractPdfUrlFromHtml(html = '', baseUrl = '') {
+  const patterns = [
+    /<meta[^>]+name=["']citation_pdf_url["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']citation_pdf_url["']/i,
+    /<meta[^>]+name=["']dc\.identifier["'][^>]+content=["']([^"']+\.pdf[^"']*)["']/i,
+    /href=["']([^"']+\.pdf(?:\?[^"']*)?)["']/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) {
+      const resolved = resolveMaybeRelativeUrl(match[1], baseUrl);
+      if (resolved) return resolved;
+    }
+  }
+  return '';
+}
+
+function getDataDir() {
+  const currentDbPath = process.env.RAIO_DB_PATH || path.join(__dirname, '..', 'data', 'raio.db');
+  return path.dirname(currentDbPath);
+}
+
+function buildPdfStoragePath(identifier) {
+  const dataDir = getDataDir();
+  const fileName = `${sanitizeIdentifier(identifier)}.pdf`;
+  return {
+    dataDir,
+    pdfsDir: path.join(dataDir, 'pdfs'),
+    relativePathForDb: path.join('pdfs', fileName),
+    absolutePath: path.join(dataDir, 'pdfs', fileName),
+  };
+}
+
+function checkInstitutionalFetchRateLimit(userId) {
+  const now = Date.now();
+  const last = institutionalFetchClock.get(userId) || 0;
+  const waitMs = INSTITUTIONAL_FETCH_INTERVAL_MS - (now - last);
+  if (waitMs > 0) {
+    throw new Error(`服务器网络全文直取已限速，请 ${Math.ceil(waitMs / 1000)} 秒后再试。`);
+  }
+  institutionalFetchClock.set(userId, now);
+}
+
+function isPrivateAddress(address = '') {
+  if (isIP(address) === 4) {
+    const [a, b] = address.split('.').map(Number);
+    return a === 0
+      || a === 10
+      || a === 127
+      || (a === 100 && b >= 64 && b <= 127)
+      || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 168)
+      || a >= 224;
+  }
+  if (isIP(address) === 6) {
+    const normalized = address.toLowerCase();
+    return normalized === '::1'
+      || normalized === '::'
+      || normalized.startsWith('fc')
+      || normalized.startsWith('fd')
+      || normalized.startsWith('fe8')
+      || normalized.startsWith('fe9')
+      || normalized.startsWith('fea')
+      || normalized.startsWith('feb');
+  }
+  return true;
+}
+
+async function assertSafeRemoteUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('无效的远程地址');
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('只允许访问 HTTP/HTTPS 地址');
+  }
+  if (url.username || url.password) {
+    throw new Error('远程地址不得包含账号或密码');
+  }
+  const addresses = await lookup(url.hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some(item => isPrivateAddress(item.address))) {
+    throw new Error('为保护本机网络，禁止访问私网或本地地址');
+  }
+}
+
+async function fetchWithTimeout(url, timeout = 7000, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    let currentUrl = String(url);
+    for (let redirects = 0; redirects <= 5; redirects += 1) {
+      await assertSafeRemoteUrl(currentUrl);
+      const response = await fetch(currentUrl, {
+        ...options,
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+      if (response.status < 300 || response.status >= 400) return response;
+      const location = response.headers.get('location');
+      if (!location) return response;
+      currentUrl = new URL(location, currentUrl).toString();
+    }
+    throw new Error('远程地址重定向次数过多');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readPdfBufferFromResponse(response) {
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  if (contentLength > MAX_FULLTEXT_BYTES) {
+    throw new Error(`PDF 文件过大（${Math.round(contentLength / 1024 / 1024)}MB），已停止下载`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  if (buffer.length > MAX_FULLTEXT_BYTES) {
+    throw new Error(`PDF 文件过大（${Math.round(buffer.length / 1024 / 1024)}MB），已停止下载`);
+  }
+  if (buffer.length < 4 || buffer.slice(0, 4).toString() !== '%PDF') {
+    throw new Error('下载的内容不是合法的 PDF 文件，可能是落地页、访问限制或验证码页面');
+  }
+  return buffer;
+}
+
 function inferNewsTopic(item = {}) {
   const raw = `${item.title || ''} ${item.description || ''}`;
   const latin = raw.match(/[A-Za-z][A-Za-z0-9+.-]{2,}/g) || [];
@@ -498,6 +778,95 @@ async function saveCorePaperForNews(userId, item, topic) {
   );
 }
 
+function firstCrossrefAuthor(message = {}) {
+  return (message.author || [])
+    .map(author => [author.given, author.family].filter(Boolean).join(' '))
+    .filter(Boolean)
+    .join(', ');
+}
+
+async function resolvePaperMetadata(input = '') {
+  const value = String(input).trim();
+  const doi = normalizeDoi(value);
+  let crossref = null;
+  let openAlex = null;
+
+  if (doi) {
+    const [crossrefResult, openAlexResult] = await Promise.allSettled([
+      fetchWithTimeout(`https://api.crossref.org/works/${encodeURIComponent(doi)}`, 10000)
+        .then(async response => response.ok ? (await response.json()).message : null),
+      fetchWithTimeout(`https://api.openalex.org/works/https://doi.org/${encodeURIComponent(doi)}`, 10000)
+        .then(async response => response.ok ? response.json() : null),
+    ]);
+    crossref = crossrefResult.status === 'fulfilled' ? crossrefResult.value : null;
+    openAlex = openAlexResult.status === 'fulfilled' ? openAlexResult.value : null;
+  } else {
+    const response = await fetchWithTimeout(
+      `https://api.crossref.org/works?query.title=${encodeURIComponent(value)}&rows=1`,
+      10000
+    );
+    if (response.ok) crossref = (await response.json()).message?.items?.[0] || null;
+  }
+
+  const resolvedDoi = normalizeDoi(crossref?.DOI || openAlex?.doi || doi);
+  const title = crossref?.title?.[0] || openAlex?.title || value;
+  const authors = firstCrossrefAuthor(crossref)
+    || (openAlex?.authorships || []).map(item => item.author?.display_name).filter(Boolean).join(', ');
+  const abstract = crossref?.abstract || openAlex?.abstract || '';
+  const landingUrl = crossref?.URL || openAlex?.doi || (resolvedDoi ? `https://doi.org/${resolvedDoi}` : '');
+  const oaLocation = openAlex?.best_oa_location || openAlex?.primary_location || null;
+
+  return {
+    doi: resolvedDoi,
+    identifier_type: resolvedDoi ? 'doi' : 'title',
+    title,
+    authors,
+    abstract: decodeXmlText(abstract),
+    url: landingUrl,
+    open_access: Boolean(openAlex?.open_access?.is_oa || oaLocation?.is_oa),
+    pdf_url: oaLocation?.pdf_url || '',
+    source: openAlex ? 'Crossref + OpenAlex' : 'Crossref',
+  };
+}
+
+async function findOpenAccessPdf(doi) {
+  if (!doi) return null;
+  const candidates = [];
+  const openAlexResponse = await fetchWithTimeout(
+    `https://api.openalex.org/works/https://doi.org/${encodeURIComponent(doi)}`,
+    10000
+  );
+  if (openAlexResponse.ok) {
+    const work = await openAlexResponse.json();
+    const location = work.best_oa_location || work.primary_location;
+    if (location?.pdf_url) candidates.push({ url: location.pdf_url, source: 'OpenAlex OA' });
+  }
+
+  const email = process.env.UNPAYWALL_EMAIL?.trim();
+  if (email) {
+    const response = await fetchWithTimeout(
+      `https://api.unpaywall.org/v2/${encodeURIComponent(doi)}?email=${encodeURIComponent(email)}`,
+      10000
+    );
+    if (response.ok) {
+      const work = await response.json();
+      const location = work.best_oa_location;
+      if (location?.url_for_pdf) candidates.unshift({ url: location.url_for_pdf, source: 'Unpaywall OA' });
+    }
+  }
+  return candidates[0] || null;
+}
+
+app.post('/api/papers/resolve', authMiddleware, async (req, res) => {
+  const input = req.body?.input || req.body?.doi || req.body?.title;
+  if (!String(input || '').trim()) return res.status(400).json({ error: '请提供 DOI 或论文标题' });
+  try {
+    res.json(await resolvePaperMetadata(input));
+  } catch (e) {
+    res.status(502).json({ error: `论文元数据补全失败：${e.message}` });
+  }
+});
+
 app.get('/api/papers/search', authMiddleware, async (req, res) => {
   try {
     const { q } = req.query;
@@ -516,24 +885,38 @@ app.get('/api/papers/saved', authMiddleware, (req, res) => {
 });
 
 app.post('/api/papers/save', authMiddleware, (req, res) => {
-  const { arxiv_id, title, authors, abstract, url } = req.body;
-  if (!arxiv_id) return res.status(400).json({ error: '论文ID不能为空' });
+  const { arxiv_id, title, authors, abstract, url, doi } = req.body;
+  const normalizedDoi = normalizeDoi(doi || url || title);
+  const arxivFromUrl = extractArxivId(url);
+  const cleanArxivId = String(arxiv_id || arxivFromUrl || '').trim();
+  let identifierType = 'arxiv';
+  let storageId = cleanArxivId;
+
+  if (!storageId && normalizedDoi) {
+    identifierType = 'doi';
+    storageId = `doi:${sanitizeIdentifier(normalizedDoi)}`;
+  } else if (!storageId && url) {
+    identifierType = 'url';
+    storageId = `url:${stableUrlId(url)}`;
+  }
+
+  if (!storageId) return res.status(400).json({ error: '论文标识不能为空，请提供 arXiv ID、DOI 或论文链接' });
   
-  const existing = getOne("SELECT id FROM papers WHERE user_id = ? AND arxiv_id = ?", [req.user.userId, arxiv_id]);
+  const existing = getOne("SELECT id FROM papers WHERE user_id = ? AND arxiv_id = ?", [req.user.userId, storageId]);
   if (existing) return res.status(400).json({ error: '已收藏该论文' });
   
-  run("INSERT INTO papers (user_id, arxiv_id, title, authors, abstract, url) VALUES (?, ?, ?, ?, ?, ?)",
-    [req.user.userId, arxiv_id, title, authors, abstract, url]);
+  run("INSERT INTO papers (user_id, arxiv_id, doi, identifier_type, title, authors, abstract, url) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    [req.user.userId, storageId, normalizedDoi, identifierType, title || normalizedDoi || url || storageId, authors || '', abstract || '', url || (normalizedDoi ? `https://doi.org/${normalizedDoi}` : '')]);
   const savedPaper = getOne(
     "SELECT * FROM papers WHERE user_id = ? AND arxiv_id = ?",
-    [req.user.userId, arxiv_id]
+    [req.user.userId, storageId]
   );
   recordMemoryEvent(req.user.userId, {
     sourceType: 'paper_save',
-    sourceId: String(savedPaper?.id || arxiv_id),
-    title: `收藏论文：${title || arxiv_id}`,
+    sourceId: String(savedPaper?.id || storageId),
+    title: `收藏论文：${title || normalizedDoi || storageId}`,
     content: `作者：${authors || '未知'}\n摘要：${abstract || '暂无'}`,
-    tags: ['图书馆', '论文', arxiv_id],
+    tags: ['图书馆', '论文', storageId],
     weight: 1.8,
     awards: { literature: 12, frontier: 4 },
   });
@@ -637,6 +1020,436 @@ arXiv ID：${paper.arxiv_id || ''}
     console.error('论文总结错误:', e);
     res.status(500).json({ error: '论文总结失败' });
   }
+});
+
+// ============ 全文获取与解析工具 ============
+
+async function fetchPaperFulltext(paperId, userId) {
+  const paper = getOne("SELECT * FROM papers WHERE id = ? AND user_id = ?", [paperId, userId]);
+  if (!paper) throw new Error('论文不存在');
+
+  const existingPath = paper.pdf_path ? path.join(getDataDir(), 'pdfs', path.basename(paper.pdf_path)) : '';
+  if (paper.pdf_status === 'fetched' && paper.pdf_path && fsSync.existsSync(existingPath)) {
+    return {
+      success: true,
+      message: '全文已存在',
+      pdf_path: paper.pdf_path,
+      pdf_source: paper.pdf_source,
+      pdf_status: paper.pdf_status,
+      steps: [],
+    };
+  }
+
+  run("UPDATE papers SET pdf_status = 'fetching' WHERE id = ?", [paperId]);
+  saveDB();
+
+  const steps = [];
+  const logStep = (stepName, status, detail = '') => {
+    steps.push({
+      step: stepName,
+      status: status,
+      detail: detail,
+      time: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
+    });
+  };
+
+  const startTime = Date.now();
+  logStep('初始化全文获取链', 'success', `Paper ID: ${paperId}, Title: ${paper.title}`);
+
+  try {
+    let buffer = null;
+    let pdfSource = '';
+    let storageIdentifier = paper.arxiv_id || paper.doi || paper.url || `paper-${paperId}`;
+    const arxivId = isArxivIdentifier(paper.arxiv_id) ? paper.arxiv_id : extractArxivId(paper.url);
+
+    if (arxivId) {
+      const pdfUrl = `https://arxiv.org/pdf/${arxivId}.pdf`;
+      storageIdentifier = arxivId;
+      pdfSource = 'arXiv';
+      logStep('解析文献标识符', 'success', `arXiv ID: ${arxivId}`);
+      logStep('定位开放获取PDF', 'success', `arXiv URL: ${pdfUrl}`);
+      logStep('开始下载PDF', 'pending', `尝试下载: ${pdfUrl}`);
+
+      const response = await fetchWithTimeout(pdfUrl, 30000);
+      if (!response.ok) {
+        logStep('开始下载PDF', 'failed', `下载失败，HTTP状态码: ${response.status}`);
+        throw new Error(`下载 PDF 失败，服务器返回状态码: ${response.status}`);
+      }
+      buffer = await readPdfBufferFromResponse(response);
+      logStep('校验PDF文件', 'success', '文件头为 %PDF');
+    } else {
+      const doi = normalizeDoi(paper.doi || paper.url || paper.title);
+      let oaCandidate = null;
+      if (doi) {
+        logStep('查询开放获取版本', 'pending', `DOI: ${doi}`);
+        try {
+          oaCandidate = await findOpenAccessPdf(doi);
+        } catch (e) {
+          logStep('查询开放获取版本', 'failed', e.message);
+        }
+      }
+
+      if (oaCandidate?.url) {
+        try {
+          logStep('查询开放获取版本', 'success', `${oaCandidate.source}: ${oaCandidate.url}`);
+          const oaResponse = await fetchWithTimeout(oaCandidate.url, 30000, {
+            headers: {
+              Accept: 'application/pdf',
+              'User-Agent': 'RAIO/1.0 open-access-fulltext-fetch',
+            },
+          });
+          if (!oaResponse.ok) throw new Error(`HTTP ${oaResponse.status}`);
+          buffer = await readPdfBufferFromResponse(oaResponse);
+          pdfSource = oaCandidate.source;
+          storageIdentifier = doi;
+          logStep('下载开放获取PDF', 'success', oaResponse.url || oaCandidate.url);
+        } catch (e) {
+          logStep('下载开放获取PDF', 'failed', `${e.message}，继续尝试论文落地页`);
+        }
+      }
+
+      if (!buffer) {
+        checkInstitutionalFetchRateLimit(userId);
+        const landingUrl = paper.url || (doi ? `https://doi.org/${doi}` : '');
+        if (!landingUrl) {
+          logStep('解析文献标识符', 'failed', '未找到 arXiv ID、DOI 或论文链接');
+          throw new Error('未找到可用于获取全文的 arXiv ID、DOI 或论文链接');
+        }
+
+        logStep('进入服务器网络单篇直取', 'success', '仅访问当前论文，不批量抓取，不自动登录，不绕过验证码');
+        logStep('访问论文落地页', 'pending', landingUrl);
+        const response = await fetchWithTimeout(landingUrl, 25000, {
+          headers: {
+            Accept: 'application/pdf,text/html,application/xhtml+xml',
+            'User-Agent': 'RAIO/1.0 single-paper-fulltext-fetch',
+          },
+          redirect: 'follow',
+        });
+        if (!response.ok) {
+          logStep('访问论文落地页', 'failed', `HTTP ${response.status}`);
+          throw new Error(`服务器网络直取失败，落地页返回 HTTP ${response.status}`);
+        }
+
+        const contentType = response.headers.get('content-type') || '';
+        if (/application\/pdf/i.test(contentType) || /\.pdf(?:$|\?)/i.test(response.url || landingUrl)) {
+          buffer = await readPdfBufferFromResponse(response);
+          pdfSource = doi ? 'server DOI direct' : 'server URL direct';
+          storageIdentifier = doi || landingUrl;
+          logStep('获取PDF直链', 'success', response.url || landingUrl);
+        } else {
+          const html = await response.text();
+          const pdfUrl = extractPdfUrlFromHtml(html, response.url || landingUrl);
+          if (!pdfUrl) {
+            logStep('查找PDF链接', 'failed', '落地页未暴露 citation_pdf_url 或直接 PDF 链接');
+            throw new Error('服务器可访问页面中未找到直接 PDF 链接；若该库需要网页登录或验证码，请手动下载，后续再接入合规机构适配器');
+          }
+          logStep('查找PDF链接', 'success', pdfUrl);
+
+          const pdfResponse = await fetchWithTimeout(pdfUrl, 30000, {
+            headers: {
+              Accept: 'application/pdf',
+              Referer: response.url || landingUrl,
+              'User-Agent': 'RAIO/1.0 single-paper-fulltext-fetch',
+            },
+            redirect: 'follow',
+          });
+          if (!pdfResponse.ok) {
+            logStep('下载服务器PDF', 'failed', `HTTP ${pdfResponse.status}`);
+            throw new Error(`服务器网络 PDF 下载失败，服务器返回 HTTP ${pdfResponse.status}`);
+          }
+          buffer = await readPdfBufferFromResponse(pdfResponse);
+          pdfSource = doi ? 'server DOI' : 'server URL';
+          storageIdentifier = doi || landingUrl;
+          logStep('下载服务器PDF', 'success', pdfResponse.url || pdfUrl);
+        }
+      }
+    }
+
+    const { pdfsDir, relativePathForDb, absolutePath } = buildPdfStoragePath(storageIdentifier);
+    if (!fsSync.existsSync(pdfsDir)) fsSync.mkdirSync(pdfsDir, { recursive: true });
+    fsSync.writeFileSync(absolutePath, buffer);
+    logStep('保存文件', 'success', `保存成功: ${relativePathForDb} (${buffer.length} 字节)`);
+
+    run(
+      "UPDATE papers SET pdf_status = 'fetched', pdf_path = ?, pdf_source = ? WHERE id = ?",
+      [relativePathForDb, pdfSource, paperId]
+    );
+    logStep('获取全文完成', 'success');
+
+    const duration = Date.now() - startTime;
+    run(
+      "INSERT INTO paper_fetch_runs (paper_id, steps, status, duration_ms, error) VALUES (?, ?, 'success', ?, '')",
+      [paperId, JSON.stringify(steps), duration]
+    );
+    saveDB();
+
+    return {
+      success: true,
+      pdf_path: relativePathForDb,
+      pdf_source: pdfSource,
+      pdf_status: 'fetched',
+      steps: steps
+    };
+  } catch (e) {
+    console.error('获取全文错误:', e);
+    logStep('获取全文发生异常', 'failed', e.message);
+
+    const duration = Date.now() - startTime;
+    run("UPDATE papers SET pdf_status = 'failed' WHERE id = ?", [paperId]);
+    run(
+      "INSERT INTO paper_fetch_runs (paper_id, steps, status, duration_ms, error) VALUES (?, ?, 'failed', ?, ?)",
+      [paperId, JSON.stringify(steps), duration, e.message]
+    );
+    saveDB();
+
+    e.paperToolResult = {
+      error: e.message || '获取全文失败',
+      pdf_status: 'failed',
+      steps: steps
+    };
+    throw e;
+  }
+}
+
+app.post('/api/papers/:id/fulltext', authMiddleware, async (req, res) => {
+  try {
+    res.json(await fetchPaperFulltext(req.params.id, req.user.userId));
+  } catch (e) {
+    const status = e.message === '论文不存在' ? 404 : 500;
+    res.status(status).json(e.paperToolResult || { error: e.message || '获取全文失败' });
+  }
+});
+
+app.get('/api/papers/:id/fetch-runs', authMiddleware, (req, res) => {
+  const paperId = req.params.id;
+  const userId = req.user.userId;
+
+  const paper = getOne("SELECT id FROM papers WHERE id = ? AND user_id = ?", [paperId, userId]);
+  if (!paper) {
+    return res.status(404).json({ error: '论文不存在' });
+  }
+
+  const runs = query("SELECT * FROM paper_fetch_runs WHERE paper_id = ? ORDER BY id DESC LIMIT 5", [paperId]);
+  for (const r of runs) {
+    try {
+      r.steps = JSON.parse(r.steps || '[]');
+    } catch (e) {
+      r.steps = [];
+    }
+  }
+  res.json(runs);
+});
+
+function getOwnedPaperPdf(paperId, userId) {
+  const paper = getOne("SELECT * FROM papers WHERE id = ? AND user_id = ?", [paperId, userId]);
+  if (!paper) throw new Error('论文不存在');
+  if (paper.pdf_status !== 'fetched' || !paper.pdf_path) throw new Error('请先获取论文全文');
+
+  const pdfRoot = path.resolve(getDataDir(), 'pdfs');
+  const absolutePath = path.resolve(getDataDir(), paper.pdf_path);
+  if (!absolutePath.startsWith(`${pdfRoot}${path.sep}`) || !fsSync.existsSync(absolutePath)) {
+    throw new Error('PDF 文件不存在或路径无效');
+  }
+  return { paper, absolutePath };
+}
+
+async function parsePaperPdf(paperId, userId) {
+  const { paper, absolutePath } = getOwnedPaperPdf(paperId, userId);
+  const parsed = await parsePdfFile(absolutePath);
+
+  run('DELETE FROM paper_sections WHERE paper_id = ?', [paperId]);
+  for (const page of parsed.pages) {
+    run(
+      'INSERT INTO paper_sections (paper_id, page_number, section_title, content) VALUES (?, ?, ?, ?)',
+      [paperId, page.page, page.title, page.content]
+    );
+  }
+  saveDB();
+
+  return {
+    success: true,
+    paper_id: Number(paperId),
+    title: paper.title,
+    page_count: parsed.pageCount,
+    parsed_pages: parsed.pages.length,
+    char_count: parsed.charCount,
+  };
+}
+
+async function generatePaperEvidence(paperId, userId, aiConfig) {
+  const paper = getOne("SELECT * FROM papers WHERE id = ? AND user_id = ?", [paperId, userId]);
+  if (!paper) throw new Error('论文不存在');
+
+  let sections = query(
+    'SELECT page_number AS page, section_title AS title, content FROM paper_sections WHERE paper_id = ? ORDER BY page_number',
+    [paperId]
+  );
+  if (!sections.length) {
+    await parsePaperPdf(paperId, userId);
+    sections = query(
+      'SELECT page_number AS page, section_title AS title, content FROM paper_sections WHERE paper_id = ? ORDER BY page_number',
+      [paperId]
+    );
+  }
+
+  const context = buildEvidenceContext(sections, 45000);
+  const coveredPages = new Set([...context.matchAll(/\[PAGE (\d+)\]/g)].map(match => Number(match[1]))).size;
+  const prompt = `你是严谨的论文证据核验 Agent。请只依据下面带页码的论文原文生成总结，不得使用外部知识，不得把推断写成原文事实。
+
+论文标题：${paper.title || ''}
+
+严格返回 JSON，不要输出代码围栏或其他文字：
+{
+  "summary": "不超过200字的全文概述；材料不足时明确说明",
+  "claims": [
+    {
+      "claim": "一条可核验结论",
+      "page": 3,
+      "snippet": "从该页逐字复制的原文片段，不超过180字符",
+      "evidence_type": "method|experiment|result|limitation|other"
+    }
+  ]
+}
+
+要求：输出 3-8 条最重要结论；snippet 必须逐字来自指定页；没有足够证据就不要生成该结论。
+
+论文原文：
+${context}`;
+
+  const result = await chatComplete(prompt, [], { agent: 'bloom', ...aiConfig });
+  const parsed = extractJsonObject(result);
+  const evidence = validateEvidenceClaims(parsed.claims, sections);
+  const summary = String(parsed.summary || '').trim();
+
+  run('DELETE FROM paper_evidence WHERE paper_id = ?', [paperId]);
+  for (const item of evidence) {
+    run(
+      `INSERT INTO paper_evidence
+        (paper_id, claim, page_number, snippet, evidence_type, confidence, verified, verification_note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        paperId,
+        item.claim,
+        item.page,
+        item.snippet,
+        item.evidence_type,
+        item.confidence,
+        item.verified ? 1 : 0,
+        item.verification_note,
+      ]
+    );
+  }
+  run(
+    `INSERT INTO paper_analyses (paper_id, summary, coverage_pages, total_pages, updated_at)
+     VALUES (?, ?, ?, ?, datetime('now', 'localtime'))
+     ON CONFLICT(paper_id) DO UPDATE SET
+       summary = excluded.summary,
+       coverage_pages = excluded.coverage_pages,
+       total_pages = excluded.total_pages,
+       updated_at = excluded.updated_at`,
+    [paperId, summary, coveredPages, sections.length]
+  );
+  saveDB();
+
+  recordMemoryEvent(userId, {
+    sourceType: 'paper_evidence',
+    sourceId: String(paperId),
+    title: `证据链总结：${paper.title || paper.arxiv_id}`,
+    content: `${summary}\n${evidence.map(item => `- ${item.claim}（第${item.page || '?'}页）`).join('\n')}`,
+    tags: ['图书馆', '证据链', evidence.every(item => item.verified) ? '已核验' : '待核验'],
+    weight: 3,
+    awards: { literature: 12, synthesis: 12, reflection: 8 },
+  });
+
+  return {
+    success: true,
+    paper_id: Number(paperId),
+    title: paper.title,
+    summary,
+    coverage_pages: coveredPages,
+    total_pages: sections.length,
+    evidence,
+    verified_count: evidence.filter(item => item.verified).length,
+  };
+}
+
+function startAgentRun(userId, paperId, tool, input) {
+  run(
+    "INSERT INTO agent_runs (user_id, paper_id, tool, status, input) VALUES (?, ?, ?, 'running', ?)",
+    [userId, paperId || null, tool, input || '']
+  );
+  return getOne('SELECT id FROM agent_runs WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId])?.id;
+}
+
+function finishAgentRun(runId, status, output = '', error = '', startedAt = Date.now()) {
+  if (!runId) return;
+  run(
+    'UPDATE agent_runs SET status = ?, output = ?, error = ?, duration_ms = ? WHERE id = ?',
+    [status, output, error, Date.now() - startedAt, runId]
+  );
+  saveDB();
+}
+
+app.get('/api/papers/:id/pdf', authMiddleware, (req, res) => {
+  try {
+    const { paper, absolutePath } = getOwnedPaperPdf(req.params.id, req.user.userId);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader('Content-Disposition', `inline; filename="paper-${paper.id}.pdf"`);
+    res.sendFile(absolutePath);
+  } catch (e) {
+    res.status(e.message === '论文不存在' ? 404 : 400).json({ error: e.message });
+  }
+});
+
+app.post('/api/papers/:id/parse', authMiddleware, async (req, res) => {
+  const startedAt = Date.now();
+  const runId = startAgentRun(req.user.userId, Number(req.params.id), 'parse_pdf', `paper:${req.params.id}`);
+  try {
+    const result = await parsePaperPdf(req.params.id, req.user.userId);
+    finishAgentRun(runId, 'success', JSON.stringify(result), '', startedAt);
+    res.json(result);
+  } catch (e) {
+    finishAgentRun(runId, 'failed', '', e.message, startedAt);
+    res.status(e.message === '论文不存在' ? 404 : 400).json({ error: e.message });
+  }
+});
+
+app.post('/api/papers/:id/evidence-summary', authMiddleware, async (req, res) => {
+  const aiConfig = getAIRequestConfig(req);
+  if (aiConfig.error) return res.status(400).json({ error: aiConfig.error });
+  const startedAt = Date.now();
+  const runId = startAgentRun(req.user.userId, Number(req.params.id), 'evidence_summary', `paper:${req.params.id}`);
+  try {
+    const result = await generatePaperEvidence(req.params.id, req.user.userId, aiConfig);
+    finishAgentRun(runId, 'success', JSON.stringify({ verified_count: result.verified_count }), '', startedAt);
+    res.json(result);
+  } catch (e) {
+    finishAgentRun(runId, 'failed', '', e.message, startedAt);
+    res.status(e.message === '论文不存在' ? 404 : 500).json({ error: e.message || '证据链总结失败' });
+  }
+});
+
+app.get('/api/papers/:id/evidence', authMiddleware, (req, res) => {
+  const paper = getOne('SELECT id FROM papers WHERE id = ? AND user_id = ?', [req.params.id, req.user.userId]);
+  if (!paper) return res.status(404).json({ error: '论文不存在' });
+  const analysis = getOne('SELECT * FROM paper_analyses WHERE paper_id = ?', [req.params.id]);
+  const evidence = query(
+    `SELECT id, claim, page_number AS page, snippet, evidence_type, confidence,
+            verified, verification_note, created_at
+     FROM paper_evidence WHERE paper_id = ? ORDER BY id`,
+    [req.params.id]
+  );
+  res.json({ analysis, evidence });
+});
+
+app.get('/api/agent/runs', authMiddleware, (req, res) => {
+  const runs = query(
+    `SELECT ar.*, p.title AS paper_title
+     FROM agent_runs ar LEFT JOIN papers p ON p.id = ar.paper_id
+     WHERE ar.user_id = ? ORDER BY ar.id DESC LIMIT 20`,
+    [req.user.userId]
+  );
+  res.json(runs);
 });
 
 // ============ 学习路径路由 ============
@@ -820,16 +1633,6 @@ function decodeXmlText(value = '') {
     .replace(/<[^>]*>/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-async function fetchWithTimeout(url, timeout = 7000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  try {
-    return await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 function parseNewsItems(text) {
@@ -1016,15 +1819,15 @@ app.post('/api/news/follow', authMiddleware, async (req, res) => {
   });
 });
 
-// ============ 星露谷素材列表 ============
+// ============ 兼容旧版静态素材列表 ============
 
 app.get('/api/stardew/list', (req, res) => {
   try {
     const dir = req.query.dir || '';
-    const targetPath = path.join(stardewPath, dir);
+    const targetPath = path.join(legacyAssetsPath, dir);
     
     // 安全检查
-    if (!targetPath.startsWith(stardewPath)) {
+    if (!targetPath.startsWith(legacyAssetsPath)) {
       return res.status(403).json({ error: '非法路径' });
     }
     
@@ -1040,6 +1843,15 @@ app.get('/api/stardew/list', (req, res) => {
   } catch (e) {
     res.status(500).json({ error: '读取失败' });
   }
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'raio-agent',
+    uptime_seconds: Math.round(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // ============ SPA 回退（生产模式） ============
@@ -1058,9 +1870,9 @@ async function start() {
   await initDB();
   
   app.listen(PORT, () => {
-    console.log(`\n🚜 RAIO 服务器已启动: http://localhost:${PORT}`);
-    console.log(`📦 前端开发服务器: http://localhost:5174`);
-    console.log(`🎮 星露谷素材: http://localhost:${PORT}/assets/stardew/`);
+    console.log(`\nRAIO 科研 Agent 服务已启动: http://localhost:${PORT}`);
+    console.log(`前端开发服务器: http://localhost:5174`);
+    console.log(`兼容静态素材路径: http://localhost:${PORT}/assets/stardew/`);
   });
 }
 
