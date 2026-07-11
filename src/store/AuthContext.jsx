@@ -62,8 +62,13 @@ export function AuthProvider({ children }) {
     localStorage.setItem('raio_maas_model', model);
   };
 
+  const updateMaasApiKey = (apiKey) => {
+    setMaasApiKey(apiKey);
+    localStorage.setItem('raio_maas_api_key', apiKey || '');
+  };
+
   return (
-    <AuthContext.Provider value={{ user, token, maasApiKey, maasModel, loading, login, logout, updateUser, updateMaasModel }}>
+    <AuthContext.Provider value={{ user, token, maasApiKey, maasModel, loading, login, logout, updateUser, updateMaasModel, updateMaasApiKey }}>
       {children}
     </AuthContext.Provider>
   );

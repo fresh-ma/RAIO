@@ -127,7 +127,7 @@ export default function NewsPage() {
     <div>
       <div className="flex items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-3">
-          <h2 className="pixel-title text-sm">📰 八卦早知道</h2>
+          <h2 className="pixel-title text-sm">📰 前沿视野</h2>
           <span className="text-xs text-sv-text2 font-pixel-cn">学术前沿一手掌握</span>
         </div>
         <button onClick={loadNews} disabled={loading} className="pixel-btn pixel-btn-teal px-3 py-1 text-xs">

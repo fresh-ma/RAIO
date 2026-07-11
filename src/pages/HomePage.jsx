@@ -1,15 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { useAuth } from '../store/AuthContext';
 import { useChat } from '../store/ChatContext';
-import { streamChat, getChatHistory, getTodos, addTodo, toggleTodo, deleteTodo, getAchievements, getGlobalRadar } from '../api';
+import {
+  streamChat,
+  getChatHistory,
+  getTodos,
+  addTodo,
+  toggleTodo,
+  deleteTodo,
+  getAchievements,
+  getGlobalRadar,
+  getSavedPapers,
+  getAgentRuns,
+} from '../api';
 
 const AGENT_DOCK = [
-  { id: 'lumo', name: '洛墨', role: '总控', icon: '🌙', color: '#6ea8fe' },
-  { id: 'hoot', name: '鸮言', role: '总控', icon: '🦉', color: '#e8b830' },
-  { id: 'bookworm', name: '书蠹', role: '论文', icon: '📚', color: '#4ecdc4' },
-  { id: 'scholar', name: '学者', role: '学习', icon: '🎓', color: '#9bd67d' },
-  { id: 'bloom', name: '花匠', role: '生活', icon: '🌻', color: '#f6c177' },
-  { id: 'gears', name: '齿轮', role: '技术', icon: '⚙️', color: '#c4a7e7' },
+  { id: 'lumo', name: '洛墨', role: '调度', icon: '🌙', color: '#6ea8fe' },
+  { id: 'hoot', name: '鸮言', role: '调度', icon: '🦉', color: '#e8b830' },
+  { id: 'bookworm', name: '书蠹', role: '获取', icon: '📚', color: '#4ecdc4' },
+  { id: 'scholar', name: '学者', role: '综述', icon: '🎓', color: '#9bd67d' },
+  { id: 'bloom', name: '砺证', role: '证据', icon: '✓', color: '#f6c177' },
+  { id: 'gears', name: '齿轮', role: '阅读', icon: '⚙️', color: '#c4a7e7' },
 ];
 
 const AGENT_MAP = Object.fromEntries(AGENT_DOCK.map(agent => [agent.id, agent]));
@@ -109,23 +121,36 @@ export default function HomePage() {
   const [achievements, setAchievements] = useState([]);
   const [newAchievement, setNewAchievement] = useState(null);
   const [radar, setRadar] = useState(null);
-  const chatEndRef = useRef(null);
+  const [recentPapers, setRecentPapers] = useState([]);
+  const [agentRuns, setAgentRuns] = useState([]);
+  const chatContainerRef = useRef(null);
 
   useEffect(() => {
     loadInitialData();
   }, [token]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
   }, [messages]);
 
   async function loadInitialData() {
     if (!token) return;
     try {
-      const [t, a, h, r] = await Promise.all([getTodos(token), getAchievements(token), getChatHistory(token), getGlobalRadar(token)]);
+      const [t, a, h, r, papers, runs] = await Promise.all([
+        getTodos(token),
+        getAchievements(token),
+        getChatHistory(token),
+        getGlobalRadar(token),
+        getSavedPapers(token),
+        getAgentRuns(token),
+      ]);
       setTodos(t);
       setAchievements(a);
       setRadar(r);
+      setRecentPapers((papers || []).slice(0, 3));
+      setAgentRuns((runs || []).slice(0, 4));
       if (messages.length === 0 && h && h.length > 0) {
         setMessages((h || []).map(msg => ({
           role: msg.role,
@@ -144,19 +169,29 @@ export default function HomePage() {
   async function refreshSideData() {
     if (!token) return;
     try {
-      const [t, a, r] = await Promise.all([getTodos(token), getAchievements(token), getGlobalRadar(token)]);
+      const [t, a, r, papers, runs] = await Promise.all([
+        getTodos(token),
+        getAchievements(token),
+        getGlobalRadar(token),
+        getSavedPapers(token),
+        getAgentRuns(token),
+      ]);
       setTodos(t);
       setAchievements(a);
       setRadar(r);
+      setRecentPapers((papers || []).slice(0, 3));
+      setAgentRuns((runs || []).slice(0, 4));
     } catch (e) {
       console.error('刷新数据失败:', e);
     }
   }
 
-  function handleSend() {
-    if (!input.trim() || isStreaming) return;
+  function handleSend(forcedMessage = '') {
+    const candidate = typeof forcedMessage === 'string' ? forcedMessage : '';
+    const message = candidate.trim() || input.trim();
+    if (!message || isStreaming) return;
     
-    const msg = input.trim();
+    const msg = message;
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: msg }]);
     setIsStreaming(true);
@@ -239,6 +274,7 @@ export default function HomePage() {
 
   const unlockedAchievements = achievements.filter(a => a.unlocked);
   const activeAgent = AGENT_MAP[currentAgent] || AGENT_MAP.lumo;
+  const latestPaper = recentPapers[0];
 
   return (
     <div className="flex flex-col gap-4">
@@ -246,49 +282,79 @@ export default function HomePage() {
         {/* 聊天区域 */}
         <div className="lg:col-span-2 pixel-panel flex flex-col" style={{ height: '75vh' }}>
           {/* 聊天头部 */}
-          <div className="flex items-center justify-between mb-3 pb-2" style={{ borderBottom: '3px dashed #4a4a6a' }}>
+          <div className="flex items-center justify-between mb-2 pb-2" style={{ borderBottom: '3px dashed #4a4a6a' }}>
             <div className="flex items-center gap-2">
               <span className="text-2xl">{activeAgent.icon}</span>
               <div>
-                <h2 className="pixel-title text-xs">智能助手</h2>
+                <h2 className="pixel-title text-xs">科研 Agent 工作台</h2>
                 <p className="text-xs text-sv-text2 font-pixel-cn">
                   {agentLabel(currentAgent)} · {selectedAgent === 'auto' ? '自动路由' : '手动指定'}
                   {currentModel ? ` · ${currentModel}` : ''}
                 </p>
               </div>
             </div>
-            {isStreaming && <span className="text-sv-gold text-xs cursor-blink font-pixel">● 回复中</span>}
+            {isStreaming && <span className="text-sv-gold text-xs cursor-blink font-pixel">● 任务执行中</span>}
           </div>
 
+          <div className="flex flex-wrap gap-2 mb-3">
+            <button
+              onClick={() => latestPaper && handleSend(`获取论文 #${latestPaper.id} 的全文`)}
+              disabled={!latestPaper || isStreaming}
+              className="pixel-btn pixel-btn-teal px-2 py-1 text-xs"
+            >
+              获取最近论文全文
+            </button>
+            <button
+              onClick={() => latestPaper && handleSend(`解析论文 #${latestPaper.id} 的 PDF`)}
+              disabled={!latestPaper || isStreaming}
+              className="pixel-btn px-2 py-1 text-xs bg-sv-dark text-sv-cream"
+              style={{ border: '3px solid #4a4a6a' }}
+            >
+              解析最近PDF
+            </button>
+            <button
+              onClick={() => latestPaper && handleSend(`为论文 #${latestPaper.id} 执行完整证据链`)}
+              disabled={!latestPaper || isStreaming}
+              className="pixel-btn pixel-btn-gold px-2 py-1 text-xs"
+            >
+              执行完整证据链
+            </button>
+            {!latestPaper && <span className="text-[10px] text-sv-text2 font-pixel-cn self-center">请先在图书馆收藏论文</span>}
+          </div>
           {/* 消息列表 */}
-          <div className="flex-1 overflow-y-auto mb-3 pr-1" style={{ minHeight: 0 }}>
+          <div ref={chatContainerRef} className="flex-1 overflow-y-auto mb-3 pr-1" style={{ minHeight: 0 }}>
             {messages.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full text-sv-text2">
-                <span className="text-4xl mb-4">🚜</span>
-                <p className="font-pixel-cn text-sm">向你的 Agent 助手打个招呼吧！</p>
-                <p className="text-xs mt-2 text-sv-text2">论文搜索·学习规划·待办管理·技术问答</p>
+                <span className="text-4xl mb-4">🤖</span>
+                <p className="font-pixel-cn text-sm">欢迎使用科研 Agent 工作台！</p>
+                <p className="text-xs mt-2 text-sv-text2">通过自然语言调度不同的科研 Agent，执行全文获取、PDF 解析、对比矩阵及综述提纲生成等任务。</p>
               </div>
             )}
 
             {messages.map((msg, i) => (
               <div key={i} className={`chat-msg mb-3 flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] px-3 py-2 rounded-lg text-sm font-pixel-cn leading-relaxed
+                <div className={`max-w-[85%] px-3 py-2 rounded-lg text-sm leading-relaxed
                   ${msg.role === 'user'
-                    ? 'bg-sv-dark text-sv-cream'
-                    : 'bg-sv-panel2 text-sv-text border border-sv-border'
+                    ? 'bg-sv-dark text-sv-cream font-pixel-cn'
+                    : 'bg-sv-panel2 text-sv-text border border-sv-border font-sans'
                   }`}
                 >
                   {msg.role === 'assistant' && msg.agent && (
-                    <span className="text-xs text-sv-gold block mb-1">
+                    <span className="text-xs text-sv-gold block mb-1 font-pixel-cn">
                       {AGENT_MAP[msg.agent]?.icon || '✨'} {agentLabel(msg.agent)}
                     </span>
                   )}
-                  {msg.content}
-                  {msg.streaming && <span className="cursor-blink text-sv-gold">▊</span>}
+                  {msg.role === 'user' ? (
+                    <div className="whitespace-pre-wrap">{msg.content}</div>
+                  ) : (
+                    <div className="markdown-body">
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      {msg.streaming && <span className="cursor-blink text-sv-gold inline-block ml-1">▊</span>}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
-            <div ref={chatEndRef} />
           </div>
 
           <div className="agent-dock mb-3">
@@ -322,7 +388,7 @@ export default function HomePage() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSend()}
               className="pixel-input flex-1 text-sm"
-              placeholder="输入消息..."
+              placeholder="输入科研任务指令或与 Agent 探讨..."
               disabled={isStreaming}
             />
             <button
@@ -336,30 +402,9 @@ export default function HomePage() {
         </div>
         
         {/* 右侧面板 */}
-        <div className="flex flex-col gap-4">
-          {/* 待办事项 */}
-          <div className="pixel-panel">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="pixel-title text-xs">能力雷达</h3>
-              <span className="text-xs text-sv-text2 font-pixel-cn">全局EXP</span>
-            </div>
-            <AbilityRadar radar={radar} />
-            <div className="mt-3 pt-3" style={{ borderTop: '2px dashed #4a4a6a' }}>
-              <p className="text-xs text-sv-gold font-pixel-cn mb-2">最近记忆</p>
-              {(radar?.memories || []).slice(0, 3).map(memory => (
-                <div key={memory.id} className="memory-chip">
-                  <span>{memory.source_type}</span>
-                  <p>{memory.title}</p>
-                </div>
-              ))}
-              {!(radar?.memories || []).length && (
-                <p className="text-xs text-sv-text2 font-pixel-cn">开始阅读、收藏或学习后会自动点亮。</p>
-              )}
-            </div>
-          </div>
-
-          <div className="pixel-panel flex-1" style={{ maxHeight: '28vh' }}>
-            <h3 className="pixel-title text-xs mb-3">📋 待办事项</h3>
+        <div className="flex flex-col gap-4" style={{ height: '75vh' }}>
+          <div className="pixel-panel flex-1 flex flex-col min-h-0">
+            <h3 className="pixel-title text-xs mb-3">📋 科研任务清单</h3>
 
             <div className="flex gap-1 mb-3">
               <input
@@ -367,16 +412,16 @@ export default function HomePage() {
                 onChange={(e) => setTodoInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAddTodo()}
                 className="pixel-input flex-1 text-xs"
-                placeholder="新的待办..."
+                placeholder="新的科研任务..."
               />
               <button onClick={handleAddTodo} className="pixel-btn pixel-btn-teal px-2 text-xs">
                 +
               </button>
             </div>
 
-            <div className="overflow-y-auto" style={{ maxHeight: 'calc(28vh - 100px)' }}>
+            <div className="flex-1 overflow-y-auto min-h-0">
               {todos.length === 0 ? (
-                <p className="text-xs text-sv-text2 text-center py-4 font-pixel-cn">暂无待办，添加一个吧 ✨</p>
+                <p className="text-xs text-sv-text2 text-center py-4 font-pixel-cn">暂无待办任务，添加一个吧 ✨</p>
               ) : (
                 todos.map(todo => (
                   <div key={todo.id} className="flex items-center gap-2 mb-2 px-2 py-1 bg-black/20 rounded">
@@ -403,77 +448,131 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* 成就公告栏 */}
-          <div className="pixel-panel flex-1" style={{ maxHeight: '28vh' }}>
-            <h3 className="pixel-title text-xs mb-3">🏆 成就公告栏</h3>
-            <div className="overflow-y-auto" style={{ maxHeight: 'calc(28vh - 60px)' }}>
-              {unlockedAchievements.length === 0 ? (
-                <div className="text-center py-4">
-                  <p className="text-2xl mb-2">🔒</p>
-                  <p className="text-xs text-sv-text2 font-pixel-cn">探索更多功能来解锁成就！</p>
+          <div className="pixel-panel flex-1 flex flex-col min-h-0">
+            <h3 className="pixel-title text-xs mb-3">最近论文与执行记录</h3>
+            <div className="mb-3">
+              {recentPapers.length === 0 ? (
+                <p className="text-xs text-sv-text2 font-pixel-cn">暂无收藏论文</p>
+              ) : recentPapers.map(paper => (
+                <div key={paper.id} className="memory-chip">
+                  <span>论文 #{paper.id} · {paper.pdf_status || 'not_fetched'}</span>
+                  <p className="line-clamp-1">{paper.title}</p>
                 </div>
-              ) : (
-                unlockedAchievements.map(a => (
-                  <div key={a.id} className="achieve-unlock flex items-center gap-2 mb-2 px-2 py-1 bg-sv-gold/10 rounded border border-sv-gold/30">
-                    <span className="text-lg">{a.icon}</span>
-                    <div>
-                      <p className="text-xs text-sv-gold font-pixel-cn">{a.name}</p>
-                      <p className="text-xs text-sv-text2">{a.description}</p>
-                    </div>
+              ))}
+            </div>
+            <div className="pixel-divider mb-3" />
+            <div className="flex-1 overflow-y-auto min-h-0">
+              {agentRuns.length === 0 ? (
+                <p className="text-xs text-sv-text2 font-pixel-cn">尚无 Agent 工具执行记录</p>
+              ) : agentRuns.map(item => (
+                <div key={item.id} className="flex items-start gap-2 text-xs font-pixel-cn mb-2">
+                  <span className={item.status === 'success' ? 'text-emerald-400' : item.status === 'failed' ? 'text-sv-red' : 'text-sv-gold'}>
+                    {item.status === 'success' ? '●' : item.status === 'failed' ? '✖' : '○'}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sv-text truncate">{item.tool}</p>
+                    <p className="text-[10px] text-sv-text2 truncate">{item.paper_title || `论文 #${item.paper_id || '-'}`} · {item.duration_ms || 0}ms</p>
                   </div>
-                ))
-              )}
+                </div>
+              ))}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Agent 状态展示区 */}
-      <div className="pixel-panel">
-        <h3 className="pixel-title text-xs mb-3">🎮 Agent 团队状态板</h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          {AGENT_DOCK.map(agent => {
-            const isActive = currentAgent === agent.id;
-            const agentModel = isActive && currentModel ? currentModel : maasModel;
-
-            const agentDesc = agent.id === 'lumo' ? '中央沉稳调度精灵' :
-                              agent.id === 'hoot' ? '中央活泼调度精灵' :
-                              agent.id === 'bookworm' ? '学术文献检索伴读' :
-                              agent.id === 'scholar' ? 'RPG知识图谱向导' :
-                              agent.id === 'bloom' ? '待办管理与情绪关怀' :
-                              agent.id === 'gears' ? '服务器与编程技术顾问' : '';
-
-            return (
-              <div
-                key={agent.id}
-                className={`pixel-panel p-3 flex flex-col items-center text-center transition-all ${
-                  isActive ? 'border-sv-gold bg-sv-panel2 scale-[1.02]' : 'border-sv-border bg-black/10'
-                }`}
-                style={{
-                  borderWidth: '3px',
-                  borderColor: isActive ? 'var(--sv-gold)' : 'var(--sv-border)',
-                  boxShadow: isActive ? '0 0 12px rgba(232, 184, 48, 0.4)' : 'none'
-                }}
-              >
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl mb-2 ${
-                  isActive ? 'animate-bounce' : ''
-                }`} style={{ background: 'rgba(255,255,255,0.06)' }}>
-                  {agent.icon}
-                </div>
-                <h4 className="text-xs text-sv-gold font-pixel-cn font-bold">{agent.name}</h4>
-                <p className="text-[10px] text-sv-text2 font-pixel-cn mt-1 leading-tight">{agentDesc}</p>
-                <div className="w-full pixel-divider my-2" />
-                <p className="text-[9px] font-pixel text-sv-teal truncate w-full" title={agentModel}>
-                  ⚙️ {agentModel}
-                </p>
-                <span className={`text-[9px] font-pixel-cn mt-1 px-1.5 py-0.5 rounded ${
-                  isActive ? 'bg-sv-gold/20 text-sv-gold' : 'bg-black/20 text-sv-text2'
-                }`}>
-                  {isActive ? '● 活跃中' : '待命'}
-                </span>
+      {/* 下移的雷达、成就和团队状态板 */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* 能力雷达 */}
+        <div className="pixel-panel">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="pixel-title text-xs">能力雷达</h3>
+            <span className="text-xs text-sv-text2 font-pixel-cn">全局EXP</span>
+          </div>
+          <AbilityRadar radar={radar} />
+          <div className="mt-3 pt-3" style={{ borderTop: '2px dashed #4a4a6a' }}>
+            <p className="text-xs text-sv-gold font-pixel-cn mb-2">最近记忆</p>
+            {(radar?.memories || []).slice(0, 3).map(memory => (
+              <div key={memory.id} className="memory-chip">
+                <span>{memory.source_type}</span>
+                <p>{memory.title}</p>
               </div>
-            );
-          })}
+            ))}
+            {!(radar?.memories || []).length && (
+              <p className="text-xs text-sv-text2 font-pixel-cn">开始阅读、收藏或学习后会自动点亮。</p>
+            )}
+          </div>
+        </div>
+
+        {/* 成就公告栏 */}
+        <div className="pixel-panel flex flex-col h-full">
+          <h3 className="pixel-title text-xs mb-3">🏆 成就公告栏</h3>
+          <div className="flex-1 overflow-y-auto min-h-[220px]">
+            {unlockedAchievements.length === 0 ? (
+              <div className="text-center py-8">
+                <p className="text-2xl mb-2">🔒</p>
+                <p className="text-xs text-sv-text2 font-pixel-cn">推进科研任务以解锁成就！</p>
+              </div>
+            ) : (
+              unlockedAchievements.map(a => (
+                <div key={a.id} className="achieve-unlock flex items-center gap-2 mb-2 px-2 py-1 bg-sv-gold/10 rounded border border-sv-gold/30">
+                  <span className="text-lg">{a.icon}</span>
+                  <div>
+                    <p className="text-xs text-sv-gold font-pixel-cn">{a.name}</p>
+                    <p className="text-xs text-sv-text2">{a.description}</p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Agent 团队状态板 */}
+        <div className="pixel-panel md:col-span-3">
+          <h3 className="pixel-title text-xs mb-3">🤖 Agent 团队状态板</h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            {AGENT_DOCK.map(agent => {
+              const isActive = currentAgent === agent.id;
+              const agentModel = isActive && currentModel ? currentModel : maasModel;
+
+              const agentDesc = agent.id === 'lumo' ? '科研任务调度 Agent' :
+                                agent.id === 'hoot' ? '科研任务调度 Agent' :
+                                agent.id === 'bookworm' ? '文献获取 Agent' :
+                                agent.id === 'scholar' ? '综述组织 Agent' :
+                                agent.id === 'bloom' ? '证据核验 Agent' :
+                                agent.id === 'gears' ? '论文阅读 Agent' : '';
+
+              return (
+                <div
+                  key={agent.id}
+                  className={`pixel-panel p-3 flex flex-col items-center text-center transition-all ${
+                    isActive ? 'border-sv-gold bg-sv-panel2 scale-[1.02]' : 'border-sv-border bg-black/10'
+                  }`}
+                  style={{
+                    borderWidth: '3px',
+                    borderColor: isActive ? 'var(--sv-gold)' : 'var(--sv-border)',
+                    boxShadow: isActive ? '0 0 12px rgba(232, 184, 48, 0.4)' : 'none'
+                  }}
+                >
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl mb-2 ${
+                    isActive ? 'animate-bounce' : ''
+                  }`} style={{ background: 'rgba(255,255,255,0.06)' }}>
+                    {agent.icon}
+                  </div>
+                  <h4 className="text-xs text-sv-gold font-pixel-cn font-bold">{agent.name}</h4>
+                  <p className="text-[10px] text-sv-text2 font-pixel-cn mt-1 leading-tight">{agentDesc}</p>
+                  <div className="w-full pixel-divider my-2" />
+                  <p className="text-[9px] font-pixel text-sv-teal truncate w-full" title={agentModel}>
+                    ⚙️ {agentModel}
+                  </p>
+                  <span className={`text-[9px] font-pixel-cn mt-1 px-1.5 py-0.5 rounded ${
+                    isActive ? 'bg-sv-gold/20 text-sv-gold' : 'bg-black/20 text-sv-text2'
+                  }`}>
+                    {isActive ? '● 活跃中' : '待命'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>

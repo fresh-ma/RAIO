@@ -11,7 +11,7 @@ const LOCATIONS = [
 ];
 
 export default function ProfilePage() {
-  const { user, token, maasModel, logout, updateUser, updateMaasModel } = useAuth();
+  const { user, token, maasModel, maasApiKey, logout, updateUser, updateMaasModel, updateMaasApiKey } = useAuth();
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
@@ -21,16 +21,18 @@ export default function ProfilePage() {
     email: user?.email || '',
     gender: user?.gender || 0,
     maasModel,
+    maasApiKey: maasApiKey || '',
   });
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
     setSaving(true);
     try {
-      const { maasModel: nextMaasModel, ...profileForm } = form;
+      const { maasModel: nextMaasModel, maasApiKey: nextMaasApiKey, ...profileForm } = form;
       await updateProfile(token, profileForm);
       updateUser(profileForm);
       updateMaasModel(nextMaasModel);
+      updateMaasApiKey(nextMaasApiKey);
       setEditing(false);
     } catch (e) {
       console.error('保存失败:', e);
@@ -167,6 +169,17 @@ export default function ProfilePage() {
                 {HUAWEI_MAAS_TEXT_MODELS.find(item => item.value === form.maasModel)?.note}
               </p>
             </div>
+
+            <div>
+              <label className="text-xs text-sv-gold font-pixel-cn mb-1 block">API Key</label>
+              <input
+                value={form.maasApiKey}
+                onChange={(e) => setForm(p => ({ ...p, maasApiKey: e.target.value }))}
+                className="pixel-input text-sm"
+                placeholder="sk-..."
+                type="password"
+              />
+            </div>
             
             <div className="flex gap-3">
               <button onClick={handleSave} disabled={saving} className="pixel-btn pixel-btn-gold px-4 py-2 text-xs">
@@ -203,6 +216,12 @@ export default function ProfilePage() {
             <div className="flex justify-between items-center">
               <span className="text-xs text-sv-text2 font-pixel-cn">MaaS 模型</span>
               <span className="text-sm text-sv-cream">{HUAWEI_MAAS_TEXT_MODELS.find(item => item.value === maasModel)?.label || maasModel}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-sv-text2 font-pixel-cn">API Key</span>
+              <span className="text-sm text-sv-cream">
+                {maasApiKey ? `sk-...${maasApiKey.slice(-4)}` : '未设置'}
+              </span>
             </div>
             
             <div className="pt-4" style={{ borderTop: '3px dashed #4a4a6a' }}>

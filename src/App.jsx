@@ -6,7 +6,6 @@ import HomePage from './pages/HomePage';
 import LibraryPage from './pages/LibraryPage';
 import LearnPage from './pages/LearnPage';
 import NewsPage from './pages/NewsPage';
-import LifePage from './pages/LifePage';
 import ProfilePage from './pages/ProfilePage';
 import Layout from './components/Layout';
 
@@ -29,7 +28,6 @@ export default function App() {
       <Route path="/library" element={<ProtectedRoute><Layout><LibraryPage /></Layout></ProtectedRoute>} />
       <Route path="/learn" element={<ProtectedRoute><Layout><LearnPage /></Layout></ProtectedRoute>} />
       <Route path="/news" element={<ProtectedRoute><Layout><NewsPage /></Layout></ProtectedRoute>} />
-      <Route path="/life" element={<ProtectedRoute><Layout><LifePage /></Layout></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Layout><ProfilePage /></Layout></ProtectedRoute>} />
     </Routes>
   );

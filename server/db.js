@@ -4,7 +4,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, '..', 'data', 'raio.db');
+const DB_PATH = process.env.RAIO_DB_PATH || path.join(__dirname, '..', 'data', 'raio.db');
 
 let db = null;
 let saveTimer = null;
@@ -88,12 +88,14 @@ function createTables() {
   
   db.run(`
     CREATE TABLE IF NOT EXISTS papers (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id     INTEGER NOT NULL,
-      arxiv_id    TEXT NOT NULL,
-      title       TEXT,
-      authors     TEXT,
-      abstract    TEXT,
+	      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	      user_id     INTEGER NOT NULL,
+	      arxiv_id    TEXT NOT NULL,
+	      doi         TEXT DEFAULT '',
+	      identifier_type TEXT DEFAULT 'arxiv',
+	      title       TEXT,
+	      authors     TEXT,
+	      abstract    TEXT,
       url         TEXT,
       saved_at    TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (user_id) REFERENCES users(id),
@@ -173,6 +175,131 @@ function createTables() {
       FOREIGN KEY (user_id) REFERENCES users(id)
     )
   `);
+
+  // 检查 papers 表是否有全文获取相关扩展列，如果没有则新增
+  try {
+    const cols = db.exec("PRAGMA table_info(papers)");
+    if (cols[0]) {
+      const colNames = cols[0].values.map(row => row[1]);
+      let altered = false;
+      if (!colNames.includes('doi')) {
+        db.run("ALTER TABLE papers ADD COLUMN doi TEXT DEFAULT ''");
+        altered = true;
+      }
+      if (!colNames.includes('identifier_type')) {
+        db.run("ALTER TABLE papers ADD COLUMN identifier_type TEXT DEFAULT 'arxiv'");
+        altered = true;
+      }
+      if (!colNames.includes('pdf_path')) {
+        db.run("ALTER TABLE papers ADD COLUMN pdf_path TEXT DEFAULT NULL");
+        altered = true;
+      }
+      if (!colNames.includes('pdf_source')) {
+        db.run("ALTER TABLE papers ADD COLUMN pdf_source TEXT DEFAULT NULL");
+        altered = true;
+      }
+      if (!colNames.includes('pdf_status')) {
+        db.run("ALTER TABLE papers ADD COLUMN pdf_status TEXT DEFAULT 'not_fetched'");
+        altered = true;
+      }
+      if (altered) {
+        saveDB();
+        console.log('[DB] papers 表结构升级成功，并已同步写入磁盘');
+      }
+    }
+  } catch (e) {
+    console.error('[DB] 升级 papers 表结构失败:', e.message);
+  }
+
+  // 检查 paper_fetch_runs 表是否有 duration_ms
+  try {
+    const cols = db.exec("PRAGMA table_info(paper_fetch_runs)");
+    if (cols[0]) {
+      const colNames = cols[0].values.map(row => row[1]);
+      if (!colNames.includes('duration_ms')) {
+        db.run("ALTER TABLE paper_fetch_runs ADD COLUMN duration_ms INTEGER DEFAULT 0");
+        saveDB();
+        console.log('[DB] paper_fetch_runs 表结构升级成功，已新增 duration_ms');
+      }
+    }
+  } catch (e) {
+    console.error('[DB] 升级 paper_fetch_runs 表结构失败:', e.message);
+  }
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS paper_fetch_runs (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      paper_id    INTEGER NOT NULL,
+      steps       TEXT DEFAULT '',
+      status      TEXT DEFAULT 'pending',
+      duration_ms INTEGER DEFAULT 0,
+      error       TEXT DEFAULT '',
+      created_at  TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (paper_id) REFERENCES papers(id)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS paper_sections (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      paper_id      INTEGER NOT NULL,
+      page_number   INTEGER NOT NULL,
+      section_title TEXT DEFAULT '',
+      content       TEXT NOT NULL,
+      created_at    TEXT DEFAULT (datetime('now', 'localtime')),
+      UNIQUE(paper_id, page_number),
+      FOREIGN KEY (paper_id) REFERENCES papers(id)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS paper_evidence (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      paper_id          INTEGER NOT NULL,
+      claim             TEXT NOT NULL,
+      page_number       INTEGER,
+      snippet           TEXT DEFAULT '',
+      evidence_type     TEXT DEFAULT 'other',
+      confidence        TEXT DEFAULT 'low',
+      verified          INTEGER DEFAULT 0,
+      verification_note TEXT DEFAULT '',
+      created_at        TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (paper_id) REFERENCES papers(id)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS paper_analyses (
+      paper_id       INTEGER PRIMARY KEY,
+      summary        TEXT DEFAULT '',
+      coverage_pages INTEGER DEFAULT 0,
+      total_pages    INTEGER DEFAULT 0,
+      updated_at     TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (paper_id) REFERENCES papers(id)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     INTEGER NOT NULL,
+      paper_id    INTEGER,
+      tool        TEXT NOT NULL,
+      status      TEXT DEFAULT 'running',
+      input       TEXT DEFAULT '',
+      output      TEXT DEFAULT '',
+      error       TEXT DEFAULT '',
+      duration_ms INTEGER DEFAULT 0,
+      created_at  TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (paper_id) REFERENCES papers(id)
+    )
+  `);
+
+  db.run('CREATE INDEX IF NOT EXISTS idx_paper_sections_paper ON paper_sections(paper_id, page_number)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_paper_evidence_paper ON paper_evidence(paper_id, page_number)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_agent_runs_user ON agent_runs(user_id, id)');
+  saveDB();
 }
 
 function seedAchievements() {

@@ -532,3 +532,72 @@ body {
   border-color: var(--sv-gold) !important;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
 }
+
+/* Markdown 样式修饰 */
+.markdown-body {
+  word-wrap: break-word;
+  color: var(--sv-cream);
+}
+.markdown-body p {
+  margin-bottom: 0.75em;
+  line-height: 1.6;
+}
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
+  color: var(--sv-gold);
+  font-weight: bold;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  line-height: 1.25;
+}
+.markdown-body h1 { font-size: 1.25rem; border-bottom: 1px dashed var(--sv-border); padding-bottom: 0.2rem; }
+.markdown-body h2 { font-size: 1.15rem; }
+.markdown-body h3 { font-size: 1.05rem; }
+.markdown-body h4 { font-size: 1rem; }
+
+.markdown-body ul {
+  list-style-type: disc;
+  padding-left: 1.5em;
+  margin-bottom: 0.75em;
+}
+.markdown-body ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+  margin-bottom: 0.75em;
+}
+.markdown-body li {
+  margin-bottom: 0.25em;
+  line-height: 1.5;
+}
+.markdown-body strong {
+  color: var(--sv-gold);
+  font-weight: 600;
+}
+.markdown-body em {
+  font-style: italic;
+  color: var(--sv-cream);
+  opacity: 0.9;
+}
+.markdown-body code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.9em;
+  color: var(--sv-gold);
+}
+.markdown-body pre {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 0.75em;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin-bottom: 0.75em;
+  border: 1px solid var(--sv-border);
+}
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  color: var(--sv-text);
+}

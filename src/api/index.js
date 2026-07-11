@@ -26,6 +26,11 @@ function getAIHeaders(token) {
 }
 
 async function readJson(res, fallbackMessage = '请求失败') {
+  if (res.status === 401) {
+    localStorage.removeItem('raio_token');
+    localStorage.removeItem('raio_user');
+    window.location.href = '/login';
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || fallbackMessage);
   return data;
@@ -128,6 +133,15 @@ export async function savePaper(token, paper) {
   return readJson(res, '收藏论文失败');
 }
 
+export async function resolvePaper(token, input) {
+  const res = await fetch(`${API_BASE}/papers/resolve`, {
+    method: 'POST',
+    headers: getHeaders(token),
+    body: JSON.stringify({ input }),
+  });
+  return readJson(res, '论文元数据补全失败');
+}
+
 export async function removePaper(token, id) {
   const res = await fetch(`${API_BASE}/papers/${id}`, {
     method: 'DELETE',
@@ -156,6 +170,60 @@ export async function summarizePaper(token, paperId) {
     headers: getAIHeaders(token),
   });
   return readJson(res, '论文总结失败');
+}
+
+export async function getFulltext(token, paperId) {
+  const res = await fetch(`${API_BASE}/papers/${paperId}/fulltext`, {
+    method: 'POST',
+    headers: getHeaders(token),
+  });
+  return readJson(res, '获取全文失败');
+}
+
+export async function getFetchRuns(token, paperId) {
+  const res = await fetch(`${API_BASE}/papers/${paperId}/fetch-runs`, {
+    headers: getHeaders(token),
+  });
+  return readJson(res, '获取全文日志失败');
+}
+
+export async function getPaperPdfBlob(token, paperId) {
+  const res = await fetch(`${API_BASE}/papers/${paperId}/pdf`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || '打开PDF失败');
+  }
+  return res.blob();
+}
+
+export async function parsePaper(token, paperId) {
+  const res = await fetch(`${API_BASE}/papers/${paperId}/parse`, {
+    method: 'POST',
+    headers: getHeaders(token),
+  });
+  return readJson(res, 'PDF解析失败');
+}
+
+export async function generateEvidenceSummary(token, paperId) {
+  const res = await fetch(`${API_BASE}/papers/${paperId}/evidence-summary`, {
+    method: 'POST',
+    headers: getAIHeaders(token),
+  });
+  return readJson(res, '证据链总结失败');
+}
+
+export async function getPaperEvidence(token, paperId) {
+  const res = await fetch(`${API_BASE}/papers/${paperId}/evidence`, {
+    headers: getHeaders(token),
+  });
+  return readJson(res, '获取证据链失败');
+}
+
+export async function getAgentRuns(token) {
+  const res = await fetch(`${API_BASE}/agent/runs`, { headers: getHeaders(token) });
+  return readJson(res, '获取Agent执行记录失败');
 }
 
 export async function getCourses(token) {
@@ -227,6 +295,12 @@ export function streamChat(token, message, agent, onChunk, onDone, onError, onAg
   })
     .then(async (res) => {
       if (!res.ok) {
+        if (res.status === 401) {
+          localStorage.removeItem('raio_token');
+          localStorage.removeItem('raio_user');
+          window.location.href = '/login';
+          return;
+        }
         const err = await res.json().catch(() => ({ error: '请求失败' }));
         onError(err.error || '聊天服务错误');
         return;

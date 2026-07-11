@@ -57,23 +57,21 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-sv-bg relative overflow-hidden"
       style={{
-        backgroundImage: `linear-gradient(rgba(26,26,46,0.85), rgba(26,26,46,0.85)), url('/assets/stardew/Stardew valley/DesertTiles..png')`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
+        backgroundImage: `radial-gradient(circle at center, #2a2a4a 0%, #1a1a2e 100%)`
       }}
     >
       {/* 装饰元素 */}
-      <div className="absolute top-10 left-10 text-4xl float-anim">🌟</div>
-      <div className="absolute top-20 right-20 text-3xl float-anim" style={{ animationDelay: '1s' }}>⭐</div>
-      <div className="absolute bottom-20 left-20 text-2xl float-anim" style={{ animationDelay: '0.5s' }}>🌾</div>
-      <div className="absolute bottom-10 right-10 text-4xl float-anim" style={{ animationDelay: '1.5s' }}>🌻</div>
+      <div className="absolute top-10 left-10 text-4xl float-anim opacity-50">🔬</div>
+      <div className="absolute top-20 right-20 text-3xl float-anim opacity-50" style={{ animationDelay: '1s' }}>📊</div>
+      <div className="absolute bottom-20 left-20 text-2xl float-anim opacity-50" style={{ animationDelay: '0.5s' }}>📚</div>
+      <div className="absolute bottom-10 right-10 text-4xl float-anim opacity-50" style={{ animationDelay: '1.5s' }}>🤖</div>
       
       <div className="pixel-panel w-full max-w-md mx-4 relative z-10">
         {/* 标题 */}
         <div className="text-center mb-6">
-          <h1 className="pixel-title text-xl mb-2">🚜 RAIO</h1>
+          <h1 className="pixel-title text-xl mb-2">🔬 RAIO</h1>
           <p className="text-sv-text2 text-sm font-pixel-cn">Research All In One</p>
-          <p className="text-sv-text2 text-xs mt-1">用星露谷的方式做科研</p>
+          <p className="text-sv-text2 text-xs mt-1">多智能体科研工作台</p>
         </div>
         
         {/* 切换按钮 */}
@@ -178,7 +176,7 @@ export default function LoginPage() {
             disabled={loading}
             className="pixel-btn pixel-btn-gold w-full py-3 text-sm font-pixel-cn"
           >
-            {loading ? '⏳ 处理中...' : isRegister ? '🎮 创建角色' : '🚜 进入农场'}
+            {loading ? '⏳ 处理中...' : isRegister ? '📝 注册系统' : '🚀 登录系统'}
           </button>
         </form>
         
