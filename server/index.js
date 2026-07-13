@@ -698,6 +698,62 @@ function fallbackMicroOutline(topic, item = {}) {
   };
 }
 
+function normalizeCourseOutline(outline, topic) {
+  const normalized = outline && typeof outline === 'object' ? outline : {};
+  const chapters = Array.isArray(normalized.chapters) ? normalized.chapters : [];
+  normalized.chapters = chapters.map((chapter, index) => ({
+    title: String(chapter?.title || `第 ${index + 1} 章`).trim(),
+    difficulty: Math.min(5, Math.max(1, Number(chapter?.difficulty || 2))),
+    duration: String(chapter?.duration || '1小时').trim(),
+    summary: String(chapter?.summary || '围绕本章主题建立概念、方法与实践之间的联系。').trim(),
+    points: Array.isArray(chapter?.points) && chapter.points.length
+      ? chapter.points.map(point => String(point).trim()).filter(Boolean).slice(0, 8)
+      : ['核心概念', '实践任务'],
+    resources: Array.isArray(chapter?.resources) ? chapter.resources.filter(item => item?.url).slice(0, 6) : [],
+    learning_text: String(chapter?.learning_text || chapter?.lesson || '').trim(),
+  }));
+
+  normalized.mindmap = buildCourseMindmap(topic, normalized.chapters);
+  normalized.markdown = buildCourseMarkdown(topic, normalized.chapters);
+  return normalized;
+}
+
+function buildCourseMindmap(topic, chapters = []) {
+  return {
+    label: topic || '成长主题',
+    children: chapters.map(chapter => ({
+      label: chapter.title,
+      meta: `${chapter.duration || ''} · 难度 ${chapter.difficulty || 1}/5`,
+      children: (chapter.points || []).slice(0, 6).map(point => ({ label: point })),
+    })),
+  };
+}
+
+function buildCourseMarkdown(topic, chapters = []) {
+  const lines = [`# ${topic || '成长之路'}`, '', '> RAIO 成长之路自动生成的学习材料，可继续配合章节测验和思维导图使用。', ''];
+  chapters.forEach((chapter, index) => {
+    lines.push(`## ${index + 1}. ${chapter.title}`);
+    lines.push('');
+    lines.push(`- 难度：${chapter.difficulty || 1}/5`);
+    lines.push(`- 预计时长：${chapter.duration || '待定'}`);
+    lines.push('');
+    lines.push(chapter.summary || '本章用于建立关键概念与实践路径。');
+    lines.push('');
+    lines.push('### 知识点');
+    (chapter.points || []).forEach(point => lines.push(`- ${point}`));
+    lines.push('');
+    lines.push('### 学习文本');
+    lines.push(chapter.learning_text || '本章详细学习材料尚未生成。请在章节详情中点击“生成本章材料”。');
+    lines.push('');
+    if (Array.isArray(chapter.resources) && chapter.resources.length) {
+      lines.push('### 资源入口');
+      chapter.resources.forEach(resource => lines.push(`- [${resource.label || resource.type || '资源'}](${resource.url})`));
+      lines.push('');
+    }
+  });
+  return lines.join('\n');
+}
+
 async function createMicroCourse(userId, topic, item, aiConfig) {
   let outline = fallbackMicroOutline(topic, item);
 
@@ -730,6 +786,8 @@ async function createMicroCourse(userId, topic, item, aiConfig) {
       console.error('微学习路径生成降级:', e.message);
     }
   }
+
+  outline = normalizeCourseOutline(outline, `微学习：${topic.slice(0, 60)}`);
 
   run(
     'INSERT INTO learn_courses (user_id, topic, outline) VALUES (?, ?, ?)',
@@ -1462,8 +1520,9 @@ app.get('/api/learn/courses', authMiddleware, (req, res) => {
       c.outline = JSON.parse(c.outline || '{}');
       if (Array.isArray(c.outline)) c.outline = { chapters: c.outline };
       if (!Array.isArray(c.outline.chapters)) c.outline.chapters = [];
+      c.outline = normalizeCourseOutline(c.outline, c.topic);
     } catch (e) {
-      c.outline = { chapters: [] };
+      c.outline = normalizeCourseOutline({ chapters: [] }, c.topic);
     }
     c.progress = query("SELECT * FROM learn_progress WHERE course_id = ? ORDER BY chapter_idx", [c.id]);
   }
@@ -1493,7 +1552,7 @@ app.post('/api/learn/generate', authMiddleware, async (req, res) => {
     }
   ]
 }
-生成5-7个章节，从基础到进阶。difficulty范围1-5。外部资源优先给B站、YouTube、菜鸟教程或高质量博客的搜索/教程链接，不要编造不存在的具体课程。`;
+生成5-7个章节，从基础到进阶。difficulty范围1-5。这里只生成路径规划，不要生成大段学习正文。外部资源优先给B站、YouTube、菜鸟教程或高质量博客的搜索/教程链接，不要编造不存在的具体课程。`;
     
     const result = await chatComplete(prompt, [], { agent: 'scholar', ...aiConfig });
     
@@ -1505,7 +1564,7 @@ app.post('/api/learn/generate', authMiddleware, async (req, res) => {
     } catch (e) {
       outline = { chapters: [{ title: topic, difficulty: 1, duration: "2小时", summary: "从基础概念开始建立学习框架。", points: ["基础知识"], resources: [] }] };
     }
-    if (!Array.isArray(outline.chapters)) outline.chapters = [];
+    outline = normalizeCourseOutline(outline, topic);
     
     // 保存课程
     run("INSERT INTO learn_courses (user_id, topic, outline) VALUES (?, ?, ?)",
@@ -1519,7 +1578,7 @@ app.post('/api/learn/generate', authMiddleware, async (req, res) => {
       sourceId: String(course.id),
       title: `生成学习路径：${topic}`,
       content: (outline.chapters || []).map((chapter, index) => `${index + 1}. ${chapter.title}: ${(chapter.points || []).join('、')}`).join('\n'),
-      tags: ['大师之路', '学习路径'],
+      tags: ['成长之路', '学习路径', '思维导图'],
       weight: 1.8,
       awards: { learning: 18, execution: 4 },
     });
@@ -1570,6 +1629,88 @@ answer是正确答案的索引(0-3)。`;
   }
 });
 
+app.post('/api/learn/material', authMiddleware, async (req, res) => {
+  try {
+    const { courseId, chapterIdx, force } = req.body;
+    const index = Number(chapterIdx);
+    if (!courseId || !Number.isInteger(index) || index < 0) {
+      return res.status(400).json({ error: '请提供有效的课程和章节' });
+    }
+
+    const aiConfig = getAIRequestConfig(req);
+    if (aiConfig.error) return res.status(400).json({ error: aiConfig.error });
+
+    const course = getOne(
+      "SELECT * FROM learn_courses WHERE id = ? AND user_id = ?",
+      [courseId, req.user.userId]
+    );
+    if (!course) return res.status(404).json({ error: '学习路径不存在' });
+
+    let outline;
+    try {
+      outline = normalizeCourseOutline(JSON.parse(course.outline || '{}'), course.topic);
+    } catch (e) {
+      outline = normalizeCourseOutline({ chapters: [] }, course.topic);
+    }
+
+    const chapter = outline.chapters[index];
+    if (!chapter) return res.status(404).json({ error: '章节不存在' });
+    if (chapter.learning_text && !force) {
+      course.outline = outline;
+      course.progress = query("SELECT * FROM learn_progress WHERE course_id = ? ORDER BY chapter_idx", [course.id]);
+      return res.json({ course, chapter, cached: true });
+    }
+
+    const prompt = `请为学习路径「${course.topic}」中的章节「${chapter.title}」生成一份具体、可直接阅读的中文学习材料。
+
+章节摘要：${chapter.summary || '暂无'}
+核心知识点：${(chapter.points || []).join('、') || chapter.title}
+预计时长：${chapter.duration || '未指定'}
+难度：${chapter.difficulty || 2}/5
+
+请使用 Markdown 输出，内容要像正常对话中的知识讲解，而不是大纲。要求：
+1. 先用通俗语言解释本章要解决什么问题。
+2. 分小节讲清楚每个核心知识点，包含关键概念、直觉理解、常见误区。
+3. 给出一个可操作的小练习或阅读任务。
+4. 给出本章完成标准。
+5. 不要编造不存在的具体课程、论文或链接。
+6. 篇幅控制在 900-1400 字。`;
+
+    const material = (await chatComplete(prompt, [], { agent: 'scholar', ...aiConfig })).trim();
+    chapter.learning_text = material || '本章材料生成失败，请稍后重试。';
+    outline = normalizeCourseOutline(outline, course.topic);
+
+    run(
+      "UPDATE learn_courses SET outline = ? WHERE id = ? AND user_id = ?",
+      [JSON.stringify(outline), courseId, req.user.userId]
+    );
+    saveDB();
+
+    const updatedCourse = getOne(
+      "SELECT * FROM learn_courses WHERE id = ? AND user_id = ?",
+      [courseId, req.user.userId]
+    );
+    updatedCourse.outline = outline;
+    updatedCourse.progress = query("SELECT * FROM learn_progress WHERE course_id = ? ORDER BY chapter_idx", [courseId]);
+
+    recordMemoryEvent(req.user.userId, {
+      sourceType: 'learn_material',
+      sourceId: `${courseId}:${index}`,
+      title: `生成章节材料：${course.topic} / ${chapter.title}`,
+      content: material,
+      tags: ['成长之路', '章节材料', course.topic, chapter.title],
+      weight: 2,
+      dedupe: true,
+      awards: { learning: 8, reflection: 4 },
+    });
+
+    res.json({ course: updatedCourse, chapter: outline.chapters[index], cached: false });
+  } catch (e) {
+    console.error('生成章节材料错误:', e);
+    res.status(500).json({ error: '生成章节材料失败' });
+  }
+});
+
 app.post('/api/learn/progress', authMiddleware, (req, res) => {
   const { courseId, chapterIdx, status, score } = req.body;
   const course = getOne(
@@ -1608,7 +1749,7 @@ app.post('/api/learn/progress', authMiddleware, (req, res) => {
     sourceId: `${courseId}:${chapterIdx}:${status}`,
     title: `学习进度：${course?.topic || '学习路径'} / ${chapterTitle}`,
     content: `状态：${status}，得分：${score || 0}`,
-    tags: ['大师之路', status],
+    tags: ['成长之路', status],
     weight: status === 'passed' ? 2 : 1.2,
     dedupe: true,
     awards: statusChanged ? {
@@ -1789,7 +1930,7 @@ app.post('/api/news/follow', authMiddleware, async (req, res) => {
         sourceId: newsKey,
         title: `新闻联动微学习：${course.topic}`,
         content: (course.outline.chapters || []).map((chapter, index) => `${index + 1}. ${chapter.title}`).join('\n'),
-        tags: ['新闻视野', '大师之路', topic, `course:${course.id}`],
+        tags: ['新闻视野', '成长之路', topic, `course:${course.id}`],
         weight: 2,
         dedupe: true,
         awards: { learning: 14, execution: 6 },

@@ -180,7 +180,7 @@ export default function NewsPage() {
                   <p className="mt-1">图书馆：{followResults[getItemKey(activeItem)].paper.title || followResults[getItemKey(activeItem)].paper.arxiv_id}</p>
                 )}
                 {followResults[getItemKey(activeItem)].course && (
-                  <p className="mt-1">大师之路：{followResults[getItemKey(activeItem)].course.topic}</p>
+                  <p className="mt-1">成长之路：{followResults[getItemKey(activeItem)].course.topic}</p>
                 )}
               </div>
             )}

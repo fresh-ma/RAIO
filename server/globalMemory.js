@@ -148,7 +148,7 @@ function courseToMemory(course) {
     source_id: String(course.id),
     title: `学习路径：${course.topic}`,
     content: trimText(chapterText || course.topic, 900),
-    tags: '大师之路,学习路径',
+    tags: '成长之路,学习路径',
     weight: 1.8,
     created_at: course.created_at,
   };
@@ -205,7 +205,7 @@ export function buildUserRagContext(userId, message) {
       const source = item.source_type === 'library'
         ? '图书馆'
         : item.source_type === 'learn_course'
-          ? '大师之路'
+          ? '成长之路'
           : item.source_type.includes('news')
             ? '新闻视野'
             : '全局记忆';

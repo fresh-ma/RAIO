@@ -249,6 +249,15 @@ export async function generateQuiz(token, data) {
   return readJson(res, '生成测验失败');
 }
 
+export async function generateChapterMaterial(token, data) {
+  const res = await fetch(`${API_BASE}/learn/material`, {
+    method: 'POST',
+    headers: getAIHeaders(token),
+    body: JSON.stringify(data),
+  });
+  return readJson(res, '生成章节材料失败');
+}
+
 export async function updateProgress(token, data) {
   const res = await fetch(`${API_BASE}/learn/progress`, {
     method: 'POST',

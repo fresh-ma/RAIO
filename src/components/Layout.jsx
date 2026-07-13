@@ -5,7 +5,7 @@ import { useAuth } from '../store/AuthContext';
 const NAV_ITEMS = [
   { path: '/', label: '🏠 主页', icon: '🏠' },
   { path: '/library', label: '📚 图书馆', icon: '📚' },
-  { path: '/learn', label: '🎓 大师之路', icon: '🎓' },
+  { path: '/learn', label: '🎓 成长之路', icon: '🎓' },
   { path: '/news', label: '📰 前沿视野', icon: '📰' },
 ];
 
